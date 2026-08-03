@@ -1,0 +1,42 @@
+import { describe, expect, it } from "vitest";
+import { DEFAULT_CONFIG, migrateConfig, redactConfigForDisk } from "../src/config.js";
+
+describe("configuration migration", () => {
+  it("upgrades a v1 profile without losing its active model", () => {
+    const result = migrateConfig({
+      activeProfile: "signor",
+      profiles: {
+        signor: {
+          baseURL: "https://example.test/v1",
+          apiKey: "secret",
+          format: "openai",
+          model: "qwen-test",
+        },
+      },
+    });
+
+    expect(result.schemaVersion).toBe(2);
+    expect(result.activeProfile).toBe("signor");
+    expect(result.profiles.signor).toMatchObject({
+      kind: "remote",
+      baseURL: "https://example.test/v1",
+      model: "qwen-test",
+    });
+    expect(result.permissions.mode).toBe("balanced");
+    expect(result.runtimes.ollama.baseURL).toBe("http://127.0.0.1:11434/v1");
+  });
+
+  it("returns isolated defaults", () => {
+    const first = migrateConfig(undefined);
+    first.ui.theme = "cool";
+    expect(migrateConfig(undefined)).toEqual(DEFAULT_CONFIG);
+  });
+
+  it("removes remote API keys from the persisted representation", () => {
+    const config = migrateConfig({
+      activeProfile: "remote",
+      profiles: { remote: { baseURL: "https://example.test/v1", apiKey: "top-secret", format: "openai", model: "test" } },
+    });
+    expect(redactConfigForDisk(config).profiles.remote.apiKey).toBe("");
+  });
+});

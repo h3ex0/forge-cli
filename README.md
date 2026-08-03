@@ -1,55 +1,35 @@
 <div align="center">
 
-# 🔥 Forge CLI
+# Forge CLI
 
-### Own your keys. Choose your model. Give your terminal an AI agent.
+### One terminal agent for cloud APIs and local open-source models.
 
-Forge is a local-first, multi-provider AI command-line agent with streaming chat, file and shell tools, reusable sessions, and token-cost visibility.
+Forge is a local-first AI coding CLI with streaming chat, workspace-scoped tools, persistent sessions, permission modes, and first-class support for Ollama, LM Studio, llama.cpp, and OpenAI-compatible runtimes.
 
-![Node.js](https://img.shields.io/badge/Node.js-%3E%3D18-339933?logo=node.js&logoColor=white)
+![Node.js](https://img.shields.io/badge/Node.js-%3E%3D22-339933?logo=node.js&logoColor=white)
 ![TypeScript](https://img.shields.io/badge/TypeScript-5.x-3178C6?logo=typescript&logoColor=white)
-![Providers](https://img.shields.io/badge/providers-OpenAI%20%7C%20Anthropic%20%7C%20Gemini-8A2BE2)
-![Status](https://img.shields.io/badge/status-alpha-orange)
+![Local models](https://img.shields.io/badge/local-Ollama%20%7C%20LM%20Studio%20%7C%20llama.cpp-7C3AED)
+![Version](https://img.shields.io/badge/version-0.2.0-orange)
 
 </div>
 
 > [!IMPORTANT]
-> Forge is currently alpha software. Review every requested tool action before approving it, especially shell commands and file writes.
+> Forge can modify files and run processes with your account's permissions. Keep the default `balanced` mode, review approval prompts, and use a dedicated workspace for untrusted projects.
 
 ## Why Forge?
 
-Forge gives you one terminal workflow across multiple AI providers without locking your conversations and tools to a single vendor.
-
-| Benefit | What it means |
+| Benefit | What it gives you |
 | --- | --- |
-| **Provider freedom** | Switch between OpenAI-compatible, Anthropic, and Gemini APIs from the same session. |
-| **Local control** | Profiles and saved conversations live under your local `~/.forge` directory. |
-| **Useful agency** | Let the model inspect projects, search code, edit files, run commands, and fetch web pages. |
-| **Human approval** | File mutations and shell execution require confirmation before they run. |
-| **Cost awareness** | Track prompt/completion tokens and estimated cost when the provider exposes pricing. |
-| **Portable setup** | Use presets or connect any compatible custom endpoint and model ID. |
+| Local model freedom | Run downloaded Qwen, Llama, Mistral, Gemma, and other models through supported local runtimes. |
+| Provider portability | Use OpenAI-compatible, Anthropic, Gemini, and custom endpoints without changing workflows. |
+| Workspace awareness | Load `FORGE.md` or `AGENTS.md`, inspect project metadata, pin files, search code, and review Git state. |
+| Layered safety | Canonical path checks, schema-validated tool calls, permission modes, SSRF defenses, atomic writes, and explicit approvals. |
+| Scriptable automation | Use interactive chat, a full-screen TUI, or `forge run` with JSON output. |
+| Local ownership | Keep configuration, history, and saved sessions under `~/.forge`; remote keys use the OS credential store when available. |
 
-## Features
+## Install
 
-- Streaming terminal responses with Markdown-aware rendering and a colorful UI
-- OpenAI-compatible, Anthropic Messages, and Gemini GenerateContent drivers
-- Multiple named provider profiles with fast provider/model switching
-- Eight built-in agent tools for files, search, shell execution, and web content
-- Confirmation prompts for mutating tools
-- Saved and reloadable local chat sessions
-- Token usage and estimated-cost status line
-- Interactive model discovery for OpenAI-compatible providers
-- TTY-aware input with bracketed-paste support
-
-## Quick start
-
-### Requirements
-
-- Node.js 18 or newer
-- npm
-- An API key for at least one supported provider
-
-### Install from source
+Requirements: Node.js 22 or newer and npm.
 
 ```bash
 git clone https://github.com/h3ex0/forge-cli.git
@@ -60,172 +40,152 @@ npm link
 forge
 ```
 
-On first launch, Forge opens a setup wizard and stores the selected provider profile locally.
-
-To work on Forge without installing a global command:
+The first interactive launch opens the provider setup wizard. For development without a global link:
 
 ```bash
-npm install
-npm run build
 npm start
 ```
 
-## Provider setup
+## Use a local Qwen model
 
-Forge supports three wire formats:
+Ollama is the quickest path. Install Ollama separately, start its service, then run:
 
-| Format | Endpoint style | Authentication |
-| --- | --- | --- |
-| `openai` | `/chat/completions` and optional `/models` | Bearer token |
-| `anthropic` | `/messages` | `x-api-key` |
-| `gemini` | `/models/{model}:streamGenerateContent` | `x-goog-api-key` |
+```bash
+forge model pull ollama:qwen3 --yes
+forge model use ollama:qwen3
+forge run "Explain this repository" --offline
+```
 
-Built-in presets are provided for Signor and OpenRouter. Choose `custom` in the setup wizard for any compatible endpoint.
-
-Configuration is stored at:
+Inside interactive Forge, the equivalent commands are:
 
 ```text
-~/.forge/config.json
+/model pull ollama:qwen3
+/model use ollama:qwen3
+/offline on
 ```
 
-Example shape:
+Forge never downloads a model silently. Pulls require explicit confirmation, and runtime processes are started only through an explicit `runtime start` command. Check the model's license and disk requirements before downloading it.
 
-```json
-{
-  "activeProfile": "openrouter",
-  "profiles": {
-    "openrouter": {
-      "baseURL": "https://openrouter.ai/api/v1",
-      "apiKey": "<YOUR_API_KEY>",
-      "format": "openai",
-      "model": "openrouter/auto"
-    }
-  }
-}
+## Local runtimes
+
+| Runtime | Default endpoint | Discovery | Download support |
+| --- | --- | --- | --- |
+| Ollama | `http://127.0.0.1:11434/v1` | Native model API | `forge model pull ollama:<model>` |
+| LM Studio | `http://127.0.0.1:1234/v1` | OpenAI-compatible API | Uses the installed `lms` command |
+| llama.cpp | `http://127.0.0.1:8080/v1` | OpenAI-compatible API | Public `.gguf` URL to Forge's local model directory |
+| Generic | `http://127.0.0.1:8000/v1` | OpenAI-compatible API | Managed externally |
+
+Examples:
+
+```bash
+forge runtime status
+forge model list
+forge model info ollama:qwen3
+forge runtime start ollama
+forge runtime start llamacpp --model-path D:\models\qwen.gguf
+forge runtime stop llamacpp
 ```
 
-> [!WARNING]
-> API keys are currently stored in this local JSON file. Forge attempts restrictive file permissions where the platform supports them, but OS keychain integration is planned and recommended before broader production use.
+Forge only stops runtime processes it previously started.
+
+## Interfaces
+
+```bash
+forge                         # interactive REPL
+forge chat                    # force the enhanced inline REPL
+forge tui                     # full-screen streamed chat
+forge run "Summarize package.json"
+forge run "Return a release summary" --json
+forge run "Work offline" --model ollama:qwen3 --offline
+forge doctor --json
+forge completion powershell
+```
+
+The inline REPL has persistent command history, Up/Down navigation, Tab completion, quoted slash-command arguments, and multiline paste support. The TUI provides a focused full-screen chat; use the inline REPL for the complete slash-command and tool workflow.
 
 ## Slash commands
 
-| Command | Purpose |
+| Area | Commands |
 | --- | --- |
-| `/help` | Show all commands |
-| `/provider list` | List configured provider profiles |
-| `/provider use <name>` | Switch active profile |
-| `/provider add` | Add a custom provider interactively |
-| `/model` | Fetch and choose a model |
-| `/model <id>` | Set a model directly |
-| `/key <profile> <key>` | Update a profile API key |
-| `/tools` | List available tools |
-| `/clear` | Reset conversation context |
-| `/history` | Display conversation history |
-| `/save [name]` | Save the current session |
-| `/load <name>` | Load a saved session |
-| `/sessions` | List saved sessions |
-| `/cost` | Display cumulative token usage and estimated cost |
-| `/exit` | Quit Forge |
+| Models and providers | `/model list`, `/model use`, `/model info`, `/model pull`, `/provider list`, `/provider use`, `/provider add` |
+| Local runtimes | `/runtime list`, `/runtime status`, `/runtime start`, `/runtime stop` |
+| Safety and routing | `/mode read-only\|balanced\|autonomous`, `/route manual\|auto`, `/offline on\|off`, `/workspace [path]` |
+| Project context | `/instructions`, `/tree`, `/index`, `/context list\|add\|drop\|clear` |
+| Developer workflow | `/diff`, `/git status\|diff\|log`, `/test [script]`, `/build`, `/review`, `/plan`, `/fix` |
+| Sessions and UI | `/new`, `/history`, `/save`, `/checkpoint`, `/load`, `/sessions`, `/cost`, `/status`, `/doctor`, `/tools`, `/ui`, `/theme` |
 
-## Agent tools
+Run `/help` for the authoritative command list.
 
-| Tool | Capability | Approval required? |
-| --- | --- | :---: |
-| `read_file` | Read a text file | No |
-| `list_dir` | List directory entries | No |
-| `glob_search` | Find paths using glob patterns | No |
-| `grep_search` | Search file contents with a regular expression | No |
-| `web_fetch` | Fetch text from a URL | No |
-| `write_file` | Create or overwrite a file | **Yes** |
-| `edit_file` | Replace one exact text match | **Yes** |
-| `bash_exec` | Execute a shell command | **Yes** |
+## Built-in tools and permissions
 
-Forge limits tool output and caps each model turn at ten tool iterations. The planned security model adds workspace boundaries, command/network policies, secret redaction, and an audit trail; see [Security](SECURITY.md) and the [Roadmap](ROADMAP.md).
+Forge classifies every tool as `read`, `write`, `process`, `network`, `credential`, or `external` and validates its arguments before execution.
 
-## How it works
+| Mode | Read | Write | Process/network |
+| --- | :---: | :---: | :---: |
+| `read-only` | Allow | Deny | Deny |
+| `balanced` (default) | Allow | Ask | Ask |
+| `autonomous` | Allow | Allow | Ask |
 
-```mermaid
-flowchart LR
-    U["You"] --> R["Forge REPL"]
-    R --> P["Provider driver"]
-    P --> O["OpenAI-compatible API"]
-    P --> A["Anthropic API"]
-    P --> G["Gemini API"]
-    P -->|"streamed response / tool call"| R
-    R --> Q{"Tool policy"}
-    Q -->|"read-only"| T["Tool runtime"]
-    Q -->|"mutating: ask first"| C["Confirmation"]
-    C --> T
-    T -->|"result"| R
-```
+The current toolset includes ranged file reads, atomic writes and exact edits, directory/tree/glob/grep search, structured process execution, compatibility shell execution, Git status/diff/log, and guarded web fetching. Filesystem tools remain inside the configured workspace after canonical path and link checks. Network tools reject credentials in URLs and private, loopback, link-local, or metadata destinations.
 
-Provider-specific request and streaming details stay behind a shared `ChatDriver` interface. The REPL owns conversation state, tool-call iteration, approvals, session persistence, and usage accounting.
+Offline mode removes network tools and refuses cloud-backed one-shot prompts.
 
-## Project structure
+## Configuration and credentials
+
+Forge uses a versioned configuration at `~/.forge/config.json`. Existing v1 configurations migrate automatically. Remote API keys are stored through the operating-system credential manager when available; headless environments can use:
 
 ```text
-forge-cli/
-├── bin/                  # npm executable launcher
-├── dist/                 # compiled JavaScript
-├── docs/                 # architecture decisions
-├── src/
-│   ├── commands/         # slash-command handling
-│   ├── providers/        # OpenAI, Anthropic, and Gemini drivers
-│   ├── tools/            # built-in agent tools
-│   ├── config.ts         # provider profiles and setup wizard
-│   ├── repl.ts           # conversation and tool loop
-│   └── session.ts        # local session persistence
-├── ROADMAP.md
-├── SECURITY.md
-└── package.json
+FORGE_API_KEY_<PROFILE_NAME>
 ```
+
+Profile names are uppercased and non-alphanumeric characters become underscores. For example, `open-router` maps to `FORGE_API_KEY_OPEN_ROUTER`.
+
+`/key` remains available for compatibility but is deprecated because command arguments can appear in terminal history. Prefer the setup flow, OS credential store, or environment variable.
+
+## Project instructions
+
+Place either file at the workspace root:
+
+```text
+FORGE.md
+AGENTS.md
+```
+
+Forge loads both when present and injects them into the system context. Use `/instructions` to see what was loaded and `/context add <file>` to pin additional files for the current conversation.
 
 ## Development
 
 ```bash
 npm install
-npm run build
-npm start
+npm run verify
 ```
 
-Use watch mode while editing TypeScript:
+`npm run verify` type-checks the project, runs the Vitest suite, and rebuilds `dist`. CI performs the same verification on Windows, macOS, and Linux with Node.js 22.
 
-```bash
-npm run dev
+## Architecture
+
+```mermaid
+flowchart LR
+    U["REPL / TUI / one-shot CLI"] --> C["Agent core"]
+    C --> R["Provider and runtime registry"]
+    R --> L["Ollama / LM Studio / llama.cpp"]
+    R --> P["OpenAI-compatible / Anthropic / Gemini"]
+    C --> E["Capability policy"]
+    E --> T["Workspace-safe tools"]
+    C --> S["Versioned config and sessions"]
+    S --> K["OS credential store"]
 ```
 
-Before opening a pull request, make sure `npm run build` succeeds. Automated tests, linting, formatting, and CI are high-priority roadmap items.
-
-## Roadmap
-
-The next releases focus on safety and reliability before adding broader autonomy:
-
-1. Workspace-scoped filesystem access and safe path resolution
-2. OS keychain-backed credentials and log redaction
-3. Command, network, and per-tool permission policies
-4. Dry-run diffs, structured audit logs, and undo-friendly changes
-5. Automated tests, CI, cancellation, retries, and context management
-6. Git-aware tools, patch application, MCP support, and plugin discovery
-7. Packaged releases for npm and common operating systems
-
-See [ROADMAP.md](ROADMAP.md) for priorities, trade-offs, milestones, and measurable targets.
-
-## Security
-
-Forge can execute model-requested actions on your machine. Treat model output and fetched web content as untrusted input, inspect approval prompts carefully, and avoid running Forge in sensitive directories until workspace sandboxing lands.
-
-Read [SECURITY.md](SECURITY.md) for the current trust model, known limitations, and vulnerability-reporting guidance.
+See [ROADMAP.md](ROADMAP.md) for upcoming work and [SECURITY.md](SECURITY.md) for the current trust boundary and vulnerability reporting process.
 
 ## Contributing
 
-Issues and pull requests are welcome. For substantial changes, open an issue first and describe the user problem, proposed behavior, security impact, and how the change will be tested.
-
-Please do not publish suspected vulnerabilities in a public issue; follow [SECURITY.md](SECURITY.md) instead.
+Issues and pull requests are welcome. Include the user problem, behavior change, security impact, and tests. Report suspected vulnerabilities privately as described in [SECURITY.md](SECURITY.md).
 
 ---
 
 <div align="center">
 
-Built for developers who want model choice, local control, and a terminal-native AI workflow.
+Built for developers who want model choice, local control, and a terminal-native workflow.
 
 </div>

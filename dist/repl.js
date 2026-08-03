@@ -3,20 +3,23 @@ import { createLineSource } from "./line-source.js";
 import { handleCommand } from "./commands/index.js";
 import { createDriver } from "./providers/index.js";
 import { fetchModels } from "./providers/models.js";
-import { getToolDefs, findTool } from "./tools/index.js";
+import { createTools } from "./tools/index.js";
+import { decidePermission } from "./security/policy.js";
 import { printStatusLine } from "./statusline.js";
 import { colors, divider, printAssistantPrefix, printError, printOk, printSystem, printToolCall, printToolResult, printWarn, } from "./ui.js";
 const MAX_TOOL_ITERATIONS = 10;
 async function runTurn(state) {
     const profile = state.cfg.profiles[state.cfg.activeProfile];
     const driver = createDriver(profile);
-    const tools = getToolDefs();
+    const toolSpecs = createTools({ workspaceRoot: state.cfg.permissions.workspaceRoot });
+    const availableTools = state.cfg.routing.offline ? toolSpecs.filter((tool) => tool.risk !== "network") : toolSpecs;
+    const tools = availableTools.map((tool) => tool.def);
     for (let iteration = 0; iteration < MAX_TOOL_ITERATIONS; iteration++) {
         let assistantText = "";
         let toolCalls = [];
         let errored = false;
         let printedPrefix = false;
-        await driver.streamChat(state.messages, tools, profile.model, {
+        await driver.streamChat(state.modelMessages(), tools, profile.model, {
             onTextDelta: (delta) => {
                 if (!printedPrefix) {
                     printAssistantPrefix(profile.model);
@@ -61,16 +64,33 @@ async function runTurn(state) {
                 // leave args empty if malformed
             }
             printToolCall(call.name, args);
-            const tool = findTool(call.name);
+            const tool = availableTools.find((candidate) => candidate.def.name === call.name);
             let resultText;
             if (!tool) {
                 resultText = `Error: unknown tool "${call.name}"`;
             }
-            else if (tool.destructive) {
-                const ok = await state.confirm(`Allow tool "${call.name}" to run?`);
-                if (!ok) {
-                    resultText = "User denied permission to run this tool.";
-                    printWarn("Denied.");
+            else {
+                const decision = decidePermission(state.cfg.permissions.mode, tool.risk);
+                if (decision === "deny") {
+                    resultText = `Permission denied: ${state.cfg.permissions.mode} mode blocks ${tool.risk} tools.`;
+                    printWarn(resultText);
+                }
+                else if (decision === "ask") {
+                    const ok = await state.confirm(`Allow tool "${call.name}" to run?`);
+                    if (!ok) {
+                        resultText = "User denied permission to run this tool.";
+                        printWarn("Denied.");
+                    }
+                    else {
+                        try {
+                            resultText = await tool.execute(args);
+                            printToolResult(resultText);
+                        }
+                        catch (err) {
+                            resultText = `Error: ${err.message}`;
+                            printError(resultText);
+                        }
+                    }
                 }
                 else {
                     try {
@@ -81,16 +101,6 @@ async function runTurn(state) {
                         resultText = `Error: ${err.message}`;
                         printError(resultText);
                     }
-                }
-            }
-            else {
-                try {
-                    resultText = await tool.execute(args);
-                    printToolResult(resultText);
-                }
-                catch (err) {
-                    resultText = `Error: ${err.message}`;
-                    printError(resultText);
                 }
             }
             state.messages.push({
@@ -135,6 +145,19 @@ export async function startRepl(cfg) {
             printOk("Goodbye.");
             state.reader.close();
             break;
+        }
+        if (state.pendingPrompt) {
+            const prompt = state.pendingPrompt;
+            state.pendingPrompt = null;
+            state.messages.push({ role: "user", content: prompt });
+            try {
+                await runTurn(state);
+            }
+            catch (err) {
+                printError(`Unexpected error: ${err.message}`);
+            }
+            divider();
+            continue;
         }
         if (cmdResult === "handled")
             continue;

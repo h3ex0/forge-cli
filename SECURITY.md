@@ -1,70 +1,59 @@
 # Security Policy
 
-Forge is a local AI agent that can read files, modify files, execute commands, and fetch network content. Those capabilities are powerful and should be treated as security-sensitive.
+Forge is a local AI agent that can read files, modify files, execute programs, and fetch network content. Treat model responses and fetched content as untrusted input.
 
 ## Supported versions
 
-Forge is currently pre-1.0 alpha software. Security fixes are applied to the latest version on the default branch; older snapshots are not supported.
+Forge is pre-1.0 software. Security fixes are applied to the latest version on the default branch.
 
 ## Current trust model
 
-- Provider requests are sent directly from your machine to the configured API endpoint.
-- Configuration and sessions are stored locally under `~/.forge`.
-- `write_file`, `edit_file`, and `bash_exec` require an interactive confirmation.
-- Read-only tools currently run without confirmation.
-- Tool output is length-limited, and each model turn is capped at ten tool iterations.
-- Forge does not currently provide a hardened sandbox.
+- Forge runs with the permissions of the current operating-system account; it is not a hardened container or OS sandbox.
+- Filesystem tools are restricted to the configured workspace using canonical path resolution and checks against symlink or Windows-junction escapes.
+- Tool inputs are validated against JSON Schema before execution.
+- `read-only`, `balanced`, and `autonomous` modes decide whether each risk class is allowed, denied, or requires confirmation.
+- Structured commands use direct process execution. The compatibility `bash_exec` tool is high-risk and always policy-gated.
+- Network fetches accept only HTTP(S), reject URL credentials, resolve DNS, and block loopback, private, link-local, and cloud-metadata-style destinations, including redirects.
+- Remote provider keys use the OS credential manager when available, with profile-specific environment variables as a headless fallback.
+- File writes are atomic, tool output is capped, and an agent turn is limited to ten tool iterations.
+- Offline mode removes network tools and prevents one-shot use of a remote profile.
+- Forge only stops local runtime processes that it recorded as Forge-owned.
+
+## Permission modes
+
+| Mode | Read | Write | Process, network, credential, external |
+| --- | :---: | :---: | :---: |
+| `read-only` | Allow | Deny | Deny |
+| `balanced` | Allow | Ask | Ask |
+| `autonomous` | Allow | Allow | Ask |
+
+`balanced` is the default. Approvals are capability decisions, not proof that a model-requested action is safe. Inspect the resolved operation and expected effect.
 
 ## Known limitations
 
-Until the security-baseline roadmap is complete:
+- Forge does not isolate tools in a VM, container, seccomp profile, or restricted OS account.
+- User-approved processes inherit the user's ambient filesystem and network permissions.
+- The shell compatibility tool accepts a command string and therefore carries shell parsing and injection risk.
+- There is not yet a durable, redacted audit log or automatic backup/undo journal for every mutation.
+- Provider retries, active-operation cancellation, and context compaction are not yet comprehensive.
+- Third-party local runtimes and downloaded model files have their own supply-chain and license risks.
+- `/key` is retained for compatibility but can expose a secret through visible terminal history; prefer the OS credential store or environment variables.
+- A model can still be influenced by prompt injection. Policy gates reduce impact but cannot establish the intent or trustworthiness of model output.
 
-- Filesystem tools are not restricted to the current workspace.
-- Paths may traverse through parent directories, symlinks, or Windows junctions.
-- API keys are stored in plaintext in `~/.forge/config.json`.
-- `/key` accepts secrets through visible terminal input.
-- `bash_exec` executes a shell command string with the user's permissions.
-- `web_fetch` does not yet block private/internal addresses or enforce HTTPS.
-- Session names and provider configuration require stronger validation.
-- There is no centralized secret-redaction pipeline or structured audit log.
-- Model responses and remote content may contain prompt-injection instructions.
-
-Run Forge only in directories and under accounts where you can tolerate the consequences of an accidentally approved action. Inspect commands and file changes before approving them.
-
-## Planned defenses
-
-The security work is tracked in [ROADMAP.md](ROADMAP.md) and centers on:
-
-1. Canonical workspace boundaries for every filesystem operation
-2. OS keychain-backed secrets and environment-variable references
-3. A capability policy with `deny`, `ask`, and `allow` decisions
-4. Structured command execution and protected-path rules
-5. SSRF defenses, HTTPS defaults, and domain policies
-6. Tool-schema validation, secret redaction, and audit logging
-7. Diff previews, atomic writes, backups, and safer recovery
+Run Forge in a narrowly scoped workspace. Do not approve commands you would not run yourself, and do not place unrelated secrets inside the workspace.
 
 ## Reporting a vulnerability
 
-Please do not disclose suspected vulnerabilities in a public issue.
+Do not disclose suspected vulnerabilities in a public issue. Use GitHub's **Security → Report a vulnerability** flow for this repository and include:
 
-Use the repository's **Security → Report a vulnerability** flow to submit a private GitHub Security Advisory. Include:
+- affected version or commit;
+- reproduction steps or a proof of concept;
+- expected and actual behavior;
+- likely impact; and
+- suggested mitigation, if known.
 
-- The affected version or commit
-- Reproduction steps or a proof of concept
-- Expected and actual behavior
-- Potential impact
-- Any suggested mitigation
-
-If private vulnerability reporting is not yet enabled, contact the repository owner privately and request a secure reporting channel before sharing sensitive details.
-
-You should receive an acknowledgement within seven days. Publication and credit will be coordinated after a fix is available.
+If private vulnerability reporting is unavailable, contact the repository owner privately and request a secure channel before sending sensitive details. An acknowledgement is targeted within seven days.
 
 ## Security-sensitive contributions
 
-Changes involving tool execution, filesystem paths, network requests, secrets, configuration, sessions, or plugins should include:
-
-- Abuse cases and trust-boundary notes
-- Automated tests for deny and failure paths
-- Cross-platform path/process behavior where relevant
-- Confirmation that logs and errors do not expose secrets
-- Backward-compatibility or migration details
+Changes involving paths, processes, network requests, credentials, sessions, runtimes, or plugins should include abuse cases, deny-path tests, cross-platform considerations, secret-exposure checks, and migration notes where applicable.

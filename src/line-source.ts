@@ -1,5 +1,15 @@
 import readline from "node:readline";
 import chalk from "chalk";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { slashCommandNames } from "./commands/registry.js";
+
+export function completeSlashCommand(input: string): { value: string; candidates: string[] } {
+  if (!input.startsWith("/") || input.includes(" ")) return { value: input, candidates: [] };
+  const candidates = slashCommandNames().map((name) => `/${name}`).filter((name) => name.startsWith(input)).sort();
+  return { value: candidates.length === 1 ? `${candidates[0]} ` : input, candidates };
+}
 
 export interface LineSource {
   next(promptText: string): Promise<string | null>;
@@ -81,6 +91,9 @@ class TtyLineSource implements LineSource {
   private promptText = "";
   private resolveCurrent: ((line: string | null) => void) | null = null;
   private cleanedUp = false;
+  private readonly historyPath = path.join(os.homedir(), ".forge", "history");
+  private history: string[] = [];
+  private historyIndex = 0;
 
   constructor() {
     process.stdin.setEncoding("utf8");
@@ -89,6 +102,10 @@ class TtyLineSource implements LineSource {
     process.stdout.write("\x1b[?2004h"); // enable bracketed paste
     process.stdin.on("data", this.onData);
     process.on("exit", this.cleanup);
+    try {
+      this.history = fs.readFileSync(this.historyPath, "utf-8").split(/\r?\n/).filter(Boolean).slice(-500);
+    } catch { /* first run */ }
+    this.historyIndex = this.history.length;
   }
 
   private cleanup = () => {
@@ -122,6 +139,7 @@ class TtyLineSource implements LineSource {
     this.mode = "normal";
     this.csiBuf = "";
     this.pasteBuf = "";
+    this.historyIndex = this.history.length;
     process.stdout.write(promptText);
     return new Promise((resolve) => {
       this.resolveCurrent = resolve;
@@ -138,6 +156,14 @@ class TtyLineSource implements LineSource {
 
   private submit() {
     const full = this.cells.map((c) => ("text" in c ? c.text : c.full)).join("");
+    if (full.trim() && !full.trimStart().startsWith("/key ")) {
+      this.history.push(full);
+      this.history = this.history.slice(-500);
+      try {
+        fs.mkdirSync(path.dirname(this.historyPath), { recursive: true });
+        fs.writeFileSync(this.historyPath, `${this.history.join("\n")}\n`, { mode: 0o600 });
+      } catch { /* history is best-effort */ }
+    }
     process.stdout.write("\r\n");
     const resolve = this.resolveCurrent;
     this.resolveCurrent = null;
@@ -149,6 +175,30 @@ class TtyLineSource implements LineSource {
     if (!last) return;
     const width = "text" in last ? last.text.length : last.label.length;
     process.stdout.write(`\x1b[${width}D\x1b[K`);
+  }
+
+  private currentValue(): string {
+    return this.cells.map((cell) => ("text" in cell ? cell.text : cell.full)).join("");
+  }
+
+  private replaceValue(value: string): void {
+    this.cells = Array.from(value, (text) => ({ text }));
+    this.redraw();
+  }
+
+  private navigateHistory(direction: -1 | 1): void {
+    if (!this.history.length) return;
+    this.historyIndex = Math.max(0, Math.min(this.history.length, this.historyIndex + direction));
+    this.replaceValue(this.historyIndex === this.history.length ? "" : this.history[this.historyIndex]);
+  }
+
+  private complete(): void {
+    const completion = completeSlashCommand(this.currentValue());
+    if (completion.candidates.length === 1) this.replaceValue(completion.value);
+    else if (completion.candidates.length > 1) {
+      process.stdout.write(`\r\n${completion.candidates.join("  ")}\r\n`);
+      this.redraw();
+    }
   }
 
   private onData = (chunk: string) => {
@@ -175,7 +225,7 @@ class TtyLineSource implements LineSource {
 
     if (this.mode === "csi") {
       this.csiBuf += ch;
-      if (this.csiBuf === "[200~") {
+      if (this.csiBuf === "200~") {
         this.mode = "paste";
         this.pasteBuf = "";
         this.csiBuf = "";
@@ -183,7 +233,9 @@ class TtyLineSource implements LineSource {
       }
       const code = ch.charCodeAt(0);
       if (code >= 0x40 && code <= 0x7e) {
-        this.mode = "normal"; // end of an unsupported CSI sequence (arrows etc.) — swallow it
+        if (this.csiBuf === "A") this.navigateHistory(-1);
+        else if (this.csiBuf === "B") this.navigateHistory(1);
+        this.mode = "normal";
         this.csiBuf = "";
       }
       return;
@@ -210,6 +262,9 @@ class TtyLineSource implements LineSource {
       case "\x7f":
       case "\b":
         this.backspace();
+        return;
+      case "\t":
+        this.complete();
         return;
       case "\x03": // Ctrl+C
         if (this.cells.length === 0) {

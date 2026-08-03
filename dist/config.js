@@ -2,21 +2,111 @@ import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
 import readline from "node:readline";
+import { z } from "zod";
 import { colors, printOk, printSystem } from "./ui.js";
+import { loadProfileSecret, storeProfileSecret } from "./security/secrets.js";
 const CONFIG_DIR = path.join(os.homedir(), ".forge");
-const CONFIG_PATH = path.join(CONFIG_DIR, "config.json");
+export const CONFIG_PATH = path.join(CONFIG_DIR, "config.json");
 export const SESSIONS_DIR = path.join(CONFIG_DIR, "sessions");
+const profileSchema = z.object({
+    baseURL: z.string().url().or(z.string().startsWith("http://")),
+    apiKey: z.string().default(""),
+    format: z.enum(["openai", "anthropic", "gemini"]),
+    model: z.string().min(1),
+    kind: z.enum(["remote", "local"]).default("remote"),
+    runtime: z.enum(["ollama", "lmstudio", "llamacpp", "openai-compatible"]).optional(),
+});
+const configSchema = z.object({
+    schemaVersion: z.literal(2),
+    activeProfile: z.string(),
+    profiles: z.record(z.string(), profileSchema),
+    permissions: z.object({
+        mode: z.enum(["read-only", "balanced", "autonomous"]),
+        workspaceRoot: z.string(),
+    }),
+    routing: z.object({
+        mode: z.enum(["manual", "auto"]),
+        offline: z.boolean(),
+        askBeforeCloud: z.boolean(),
+    }),
+    ui: z.object({ mode: z.enum(["inline", "tui"]), theme: z.string() }),
+    runtimes: z.record(z.enum(["ollama", "lmstudio", "llamacpp", "openai-compatible"]), z.object({ baseURL: z.string(), executable: z.string().optional(), modelRoots: z.array(z.string()).optional() })),
+});
+export const DEFAULT_CONFIG = {
+    schemaVersion: 2,
+    activeProfile: "",
+    profiles: {},
+    permissions: { mode: "balanced", workspaceRoot: process.cwd() },
+    routing: { mode: "manual", offline: false, askBeforeCloud: true },
+    ui: { mode: "inline", theme: "flame" },
+    runtimes: {
+        ollama: { baseURL: "http://127.0.0.1:11434/v1", executable: "ollama" },
+        lmstudio: { baseURL: "http://127.0.0.1:1234/v1", executable: "lms" },
+        llamacpp: { baseURL: "http://127.0.0.1:8080/v1", executable: "llama-server", modelRoots: [] },
+        "openai-compatible": { baseURL: "http://127.0.0.1:8000/v1" },
+    },
+};
+export function migrateConfig(raw) {
+    if (!raw || typeof raw !== "object")
+        return structuredClone(DEFAULT_CONFIG);
+    const candidate = raw;
+    if (candidate.schemaVersion === 2)
+        return configSchema.parse(candidate);
+    const legacyProfiles = (candidate.profiles && typeof candidate.profiles === "object" ? candidate.profiles : {});
+    const profiles = {};
+    for (const [name, value] of Object.entries(legacyProfiles)) {
+        const parsed = profileSchema.safeParse({ ...value, kind: "remote" });
+        if (parsed.success)
+            profiles[name] = parsed.data;
+    }
+    return {
+        ...structuredClone(DEFAULT_CONFIG),
+        activeProfile: typeof candidate.activeProfile === "string" ? candidate.activeProfile : "",
+        profiles,
+    };
+}
 export function configExists() {
     return fs.existsSync(CONFIG_PATH);
 }
 export function loadConfig() {
     const raw = fs.readFileSync(CONFIG_PATH, "utf-8");
-    return JSON.parse(raw);
+    const config = migrateConfig(JSON.parse(raw));
+    let migratedSecret = false;
+    for (const [name, profile] of Object.entries(config.profiles)) {
+        if (profile.kind !== "remote")
+            continue;
+        if (profile.apiKey) {
+            migratedSecret = storeProfileSecret(name, profile.apiKey) || migratedSecret;
+        }
+        else {
+            profile.apiKey = loadProfileSecret(name);
+        }
+    }
+    if (migratedSecret)
+        saveConfig(config);
+    return config;
+}
+export function redactConfigForDisk(cfg) {
+    const disk = structuredClone(cfg);
+    for (const profile of Object.values(disk.profiles)) {
+        if (profile.kind === "remote")
+            profile.apiKey = "";
+    }
+    return disk;
 }
 export function saveConfig(cfg) {
     if (!fs.existsSync(CONFIG_DIR))
         fs.mkdirSync(CONFIG_DIR, { recursive: true });
-    fs.writeFileSync(CONFIG_PATH, JSON.stringify(cfg, null, 2), { mode: 0o600 });
+    const disk = structuredClone(cfg);
+    for (const [name, profile] of Object.entries(disk.profiles)) {
+        if (profile.kind !== "remote" || !profile.apiKey)
+            continue;
+        if (storeProfileSecret(name, profile.apiKey))
+            profile.apiKey = "";
+        else
+            console.error(`Warning: OS credential storage unavailable; ${name} remains in the protected config file.`);
+    }
+    fs.writeFileSync(CONFIG_PATH, JSON.stringify(configSchema.parse(disk), null, 2), { mode: 0o600 });
     try {
         fs.chmodSync(CONFIG_PATH, 0o600);
     }
@@ -37,7 +127,7 @@ export async function runSetupWizard() {
     const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
     console.log(colors.accent("\nWelcome to Forge — let's connect your first API provider(s).\n"));
     console.log(colors.dim("Your keys are stored locally only, at " + CONFIG_PATH + "\n"));
-    const cfg = { activeProfile: "", profiles: {} };
+    const cfg = structuredClone(DEFAULT_CONFIG);
     let addMore = true;
     let first = true;
     while (addMore) {
@@ -64,7 +154,7 @@ export async function runSetupWizard() {
         const apiKey = await ask(rl, colors.user(`API key for ${profileName}: `));
         const modelAns = await ask(rl, colors.user(`Default model [${defaultModel}]: `));
         const model = modelAns || defaultModel;
-        cfg.profiles[profileName] = { baseURL, apiKey, format, model };
+        cfg.profiles[profileName] = { baseURL, apiKey, format, model, kind: "remote" };
         if (first) {
             cfg.activeProfile = profileName;
             first = false;
