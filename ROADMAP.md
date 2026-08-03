@@ -29,7 +29,16 @@ Forge is evolving into a local-first, provider-independent terminal agent that c
 - Estimated session cost, cumulative per-profile token ledgers, configured plan ceilings, and provider-reported token/request rate limits.
 - Config schema v3, TUI autosave, richer themes, and `NO_COLOR` behavior.
 
-## v0.4 — Reliability and recovery
+## Shipped in v0.4 — Command power pack
+
+- Workspace navigation commands for ranged reads, context pinning, regex search, glob discovery, and changed-file inspection.
+- Package-script-aware lint, format, type-check, test, build, and sequential quality-check workflows.
+- Structured `/run` execution with argument arrays and the existing process permission boundary.
+- Focused agent workflows for explanation, refactoring, test generation, documentation, security review, and work summaries.
+- Autosave resume, conversation branching, Markdown/JSON export, and local usage inspection/reset commands.
+- Matching behavior in the inline REPL and full-screen TUI, including palette discovery and visible sequential tool activity.
+
+## v0.5 — Reliability and recovery
 
 - Add bounded provider retries with jitter and useful error classification.
 - Add full filesystem undo journals, richer crash recovery, session export formats, and session deletion.
@@ -38,7 +47,7 @@ Forge is evolving into a local-first, provider-independent terminal agent that c
 - Add redacted structured audit records with retention controls.
 - Add backup and undo journals for workspace mutations.
 
-## v0.5 — Developer workflow
+## v0.6 — Developer workflow
 
 - Add unified patch application with diff previews.
 - Add safe move/delete operations with recoverable behavior.
@@ -47,7 +56,7 @@ Forge is evolving into a local-first, provider-independent terminal agent that c
 - Add tool result caching and bounded parallel read-only tools.
 - Expand machine-readable output across model, session, config, and doctor commands.
 
-## v0.6 — Smart local routing
+## v0.7 — Smart local routing
 
 - Route tasks using health, capabilities, context size, latency, and user policy.
 - Prefer capable local models; disclose and approve escalation to cloud providers.
@@ -55,7 +64,7 @@ Forge is evolving into a local-first, provider-independent terminal agent that c
 - Improve capability detection for Qwen and other model families across runtimes.
 - Add dedicated Git diff, diagnostics, plan, and provider-settings panes to the full-screen workspace.
 
-## v0.7 — Extensibility
+## v0.8 — Extensibility
 
 - Add MCP client support behind the same capability-policy boundary.
 - Add versioned plugin manifests with explicit requested capabilities.

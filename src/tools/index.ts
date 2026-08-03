@@ -244,7 +244,7 @@ export function createTools(context: ToolContext): ToolSpec[] {
       async (args, signal) => {
         let url = await validatePublicUrl(text(args, "url"));
         for (let redirects = 0; redirects <= 5; redirects++) {
-          const response = await fetch(url, { redirect: "manual", signal, headers: { "User-Agent": "forge-cli/0.3" } });
+          const response = await fetch(url, { redirect: "manual", signal, headers: { "User-Agent": "forge-cli/0.4" } });
           if (response.status >= 300 && response.status < 400) {
             const location = response.headers.get("location");
             if (!location) throw new Error("Redirect response had no location.");

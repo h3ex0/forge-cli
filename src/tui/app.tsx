@@ -328,33 +328,42 @@ export function ForgeTui({ config }: { config: ForgeConfig }): React.ReactElemen
       finally { setBusy(false); flushQueuedPrompt(); }
       return;
     }
-    if (command.type === "tool") {
-      const tool = createTools({ workspaceRoot: config.permissions.workspaceRoot }).find((item) => item.def.name === command.name);
-      if (!tool) { setNotice(`Tool ${command.name} is unavailable.`); return; }
-      const decision = decidePermission(config.permissions.mode, tool.risk);
-      if (decision === "deny") { setNotice(`${config.permissions.mode} mode blocks ${tool.risk} tools.`); return; }
-      if (decision === "ask") {
-        const id = `command-${Date.now()}`;
-        const allowed = await requestApproval({
-          call: { id, name: tool.def.name, arguments: JSON.stringify(command.args) },
-          activity: { id, name: tool.def.name, risk: tool.risk, status: "waiting", args: command.args, startedAt: Date.now() },
-        });
-        if (!allowed) { setNotice("Command denied."); return; }
-      }
-      const activity: ToolActivity = { id: `command-${Date.now()}`, name: tool.def.name, risk: tool.risk, status: "running", args: command.args, startedAt: Date.now() };
-      setActivities((items) => [activity, ...items].slice(0, 20));
+    if (command.type === "tool" || command.type === "tool-sequence") {
+      const requestedTools = command.type === "tool" ? [{ name: command.name, args: command.args }] : command.tools;
       setBusy(true);
       operationAbortRef.current = new AbortController();
       try {
-        const result = await tool.execute(command.args, operationAbortRef.current.signal);
-        activity.status = "completed"; activity.result = result; activity.durationMs = Date.now() - activity.startedAt;
-        messagesRef.current.push({ role: "assistant", content: `Command output (${tool.def.name}):\n${result}` });
-        setNotice(`${tool.def.name} completed.`);
-      } catch (error) {
-        activity.status = "failed"; activity.result = error instanceof Error ? error.message : String(error); activity.durationMs = Date.now() - activity.startedAt;
-        setNotice(`${tool.def.name} failed: ${activity.result}`);
+        for (let index = 0; index < requestedTools.length; index += 1) {
+          const requested = requestedTools[index];
+          const tool = createTools({ workspaceRoot: config.permissions.workspaceRoot }).find((item) => item.def.name === requested.name);
+          if (!tool) { setNotice(`Tool ${requested.name} is unavailable.`); break; }
+          const decision = decidePermission(config.permissions.mode, tool.risk);
+          if (decision === "deny") { setNotice(`${config.permissions.mode} mode blocks ${tool.risk} tools.`); break; }
+          if (decision === "ask") {
+            const id = `command-${Date.now()}-${index}`;
+            const allowed = await requestApproval({
+              call: { id, name: tool.def.name, arguments: JSON.stringify(requested.args) },
+              activity: { id, name: tool.def.name, risk: tool.risk, status: "waiting", args: requested.args, startedAt: Date.now() },
+            });
+            if (!allowed) { setNotice("Command denied."); break; }
+          }
+          const activity: ToolActivity = { id: `command-${Date.now()}-${index}`, name: tool.def.name, risk: tool.risk, status: "running", args: requested.args, startedAt: Date.now() };
+          setActivities((items) => [activity, ...items].slice(0, 20));
+          try {
+            setNotice(requestedTools.length > 1 ? `Check ${index + 1}/${requestedTools.length}: ${tool.def.name}` : `Running ${tool.def.name}...`);
+            const result = await tool.execute(requested.args, operationAbortRef.current.signal);
+            activity.status = "completed"; activity.result = result; activity.durationMs = Date.now() - activity.startedAt;
+            messagesRef.current.push({ role: "assistant", content: `Command output (${tool.def.name}):\n${result}` });
+            setNotice(requestedTools.length > 1 ? `Check ${index + 1}/${requestedTools.length} completed.` : `${tool.def.name} completed.`);
+          } catch (error) {
+            activity.status = "failed"; activity.result = error instanceof Error ? error.message : String(error); activity.durationMs = Date.now() - activity.startedAt;
+            setNotice(`${tool.def.name} failed: ${activity.result}`);
+            break;
+          } finally {
+            setActivities((items) => [{ ...activity }, ...items.filter((item) => item.id !== activity.id)].slice(0, 20));
+          }
+        }
       } finally {
-        setActivities((items) => [{ ...activity }, ...items.filter((item) => item.id !== activity.id)].slice(0, 20));
         operationAbortRef.current = null; setBusy(false); setRevision((revision) => revision + 1); flushQueuedPrompt();
       }
       return;

@@ -31,3 +31,12 @@ export function defaultSessionName() {
     const pad = (n) => String(n).padStart(2, "0");
     return `session-${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}-${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`;
 }
+/** Serialize a conversation as JSON or readable Markdown based on the target extension. */
+export function serializeConversation(messages, extension) {
+    if (extension === ".json")
+        return `${JSON.stringify(messages, null, 2)}\n`;
+    return messages
+        .filter((message) => message.role !== "system")
+        .map((message) => `## ${message.role === "assistant" ? "Forge" : message.role === "user" ? "You" : `Tool: ${message.name ?? "result"}`}\n\n${message.content}`)
+        .join("\n\n---\n\n") + "\n";
+}

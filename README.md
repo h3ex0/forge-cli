@@ -9,7 +9,7 @@ Forge is a local-first AI coding CLI with a TUI-first workspace, streaming chat,
 ![Node.js](https://img.shields.io/badge/Node.js-%3E%3D22-339933?logo=node.js&logoColor=white)
 ![TypeScript](https://img.shields.io/badge/TypeScript-5.x-3178C6?logo=typescript&logoColor=white)
 ![Local models](https://img.shields.io/badge/local-Ollama%20%7C%20LM%20Studio%20%7C%20llama.cpp-7C3AED)
-![Version](https://img.shields.io/badge/version-0.3.0-orange)
+![Version](https://img.shields.io/badge/version-0.4.0-orange)
 
 </div>
 
@@ -154,11 +154,14 @@ Forge keeps a protected local cumulative token ledger per profile and compares i
 | Models and providers | `/model list`, `/model use`, `/model info`, `/model pull`, `/provider list`, `/provider use`, `/provider add` |
 | Local runtimes | `/runtime list`, `/runtime status`, `/runtime start`, `/runtime stop` |
 | Safety and routing | `/mode read-only\|balanced\|autonomous`, `/route manual\|auto`, `/offline on\|off`, `/workspace [path]` |
-| Project context | `/instructions`, `/tree`, `/index`, `/context list\|add\|drop\|clear` |
-| Developer workflow | `/diff`, `/git status\|diff\|log`, `/test [script]`, `/build`, `/review`, `/plan`, `/fix` |
-| Sessions and UI | `/new`, `/history`, `/save`, `/checkpoint`, `/load`, `/sessions`, `/cost`, `/limit`, `/status`, `/doctor`, `/tools`, `/ui`, `/theme` |
+| Project context | `/instructions`, `/tree`, `/index`, `/context list\|add\|drop\|clear`, `/read`, `/open`, `/search`, `/files` |
+| Developer workflow | `/diff`, `/changed`, `/git status\|diff\|log`, `/test`, `/build`, `/lint`, `/format`, `/typecheck`, `/check`, `/run` |
+| Agent workflows | `/review`, `/plan`, `/fix`, `/explain`, `/refactor`, `/testgen`, `/docs`, `/security`, `/summarize` |
+| Sessions and UI | `/new`, `/history`, `/save`, `/checkpoint`, `/load`, `/resume`, `/branch`, `/export`, `/sessions`, `/cost`, `/usage`, `/limit`, `/status`, `/doctor`, `/tools`, `/ui`, `/theme` |
 
 Run `/help` for the authoritative command list.
+
+`/run` passes the executable and each argument separately, avoiding shell-string interpolation. `/check` discovers available `typecheck`, `lint`, `test`, and `build` scripts and runs them in order, stopping on the first failure. Process and write commands still follow the active permission mode and approval flow.
 
 ## Built-in tools and permissions
 

@@ -2,13 +2,22 @@ import fs from "node:fs";
 import ora from "ora";
 import { colors, printError, printOk, printSystem, printWarn, divider } from "../ui.js";
 import { createTools } from "../tools/index.js";
-import { listSessions, saveSession, loadSession, defaultSessionName } from "../session.js";
+import { listSessions, saveSession, loadSession, defaultSessionName, serializeConversation } from "../session.js";
 import { fetchModels } from "../providers/models.js";
 import { activateLocalModel, inspectLocalModel, listRuntimeSummaries, pullLocalModel } from "../runtime/service.js";
 import { startRuntime, stopOwnedRuntime } from "../runtime/process.js";
 import { detectProject } from "../project.js";
 import { parseSlashCommand } from "./parser.js";
 import { SLASH_COMMANDS } from "./registry.js";
+import { clearProfileUsage, loadUsageLedger } from "../usage-store.js";
+function npmCommand() {
+    return process.platform === "win32" ? "npm.cmd" : "npm";
+}
+function selectScript(scripts, requested, candidates) {
+    if (requested)
+        return scripts.includes(requested) ? requested : undefined;
+    return candidates.find((candidate) => scripts.includes(candidate));
+}
 export async function handleCommand(input, state) {
     const parsed = parseSlashCommand(input);
     if (!parsed)
@@ -299,6 +308,72 @@ export async function handleCommand(input, state) {
             console.log(await tool.execute({ pattern: arg || "**/*" }));
             return "handled";
         }
+        case "read": {
+            if (!rest[0]) {
+                printWarn("Usage: /read <file> [start:end]");
+                return "handled";
+            }
+            const range = rest[1]?.match(/^(\d+):(\d+)$/);
+            if (rest[1] && !range) {
+                printWarn("Line range must use start:end, for example 10:40.");
+                return "handled";
+            }
+            const tool = createTools({ workspaceRoot: state.cfg.permissions.workspaceRoot }).find((item) => item.def.name === "read_file");
+            try {
+                console.log(await tool.execute({ path: rest[0], startLine: range ? Number(range[1]) : undefined, endLine: range ? Number(range[2]) : undefined }));
+            }
+            catch (error) {
+                printError(error.message);
+            }
+            return "handled";
+        }
+        case "open": {
+            if (!arg) {
+                printWarn("Usage: /open <file>");
+                return "handled";
+            }
+            try {
+                printOk(`Pinned ${state.pinContext(arg)}.`);
+            }
+            catch (error) {
+                printError(error.message);
+            }
+            return "handled";
+        }
+        case "search": {
+            if (!rest[0]) {
+                printWarn("Usage: /search <regex> [glob]");
+                return "handled";
+            }
+            const tool = createTools({ workspaceRoot: state.cfg.permissions.workspaceRoot }).find((item) => item.def.name === "grep_search");
+            try {
+                console.log(await tool.execute({ pattern: rest[0], glob: rest[1] ?? "**/*" }));
+            }
+            catch (error) {
+                printError(error.message);
+            }
+            return "handled";
+        }
+        case "files": {
+            const tool = createTools({ workspaceRoot: state.cfg.permissions.workspaceRoot }).find((item) => item.def.name === "glob_search");
+            try {
+                console.log(await tool.execute({ pattern: arg || "**/*" }));
+            }
+            catch (error) {
+                printError(error.message);
+            }
+            return "handled";
+        }
+        case "changed": {
+            const tool = createTools({ workspaceRoot: state.cfg.permissions.workspaceRoot }).find((item) => item.def.name === "git_status");
+            try {
+                console.log(await tool.execute({ args: ["--short"] }));
+            }
+            catch (error) {
+                printError(error.message);
+            }
+            return "handled";
+        }
         case "index": {
             const info = detectProject(state.cfg.permissions.workspaceRoot);
             printSystem(`Languages: ${info.languages.join(", ") || "unknown"}`);
@@ -369,6 +444,65 @@ export async function handleCommand(input, state) {
             }
             return "handled";
         }
+        case "lint":
+        case "format":
+        case "typecheck": {
+            const project = detectProject(state.cfg.permissions.workspaceRoot);
+            const candidates = cmd === "lint" ? ["lint"] : cmd === "format" ? ["format", "fmt"] : ["typecheck", "check:types"];
+            const script = selectScript(project.scripts, rest[0], candidates);
+            if (!script) {
+                printError(rest[0] ? `No npm script named "${rest[0]}" was detected.` : `No ${cmd} npm script was detected.`);
+                return "handled";
+            }
+            if (!(await state.confirm(`Run npm ${script} in ${state.cfg.permissions.workspaceRoot}?`)))
+                return "handled";
+            const tool = createTools({ workspaceRoot: state.cfg.permissions.workspaceRoot }).find((item) => item.def.name === "run_command");
+            try {
+                console.log(await tool.execute({ command: npmCommand(), args: ["run", script] }));
+            }
+            catch (error) {
+                printError(error.message);
+            }
+            return "handled";
+        }
+        case "check": {
+            const project = detectProject(state.cfg.permissions.workspaceRoot);
+            const scripts = ["typecheck", "lint", "test", "build"].filter((script) => project.scripts.includes(script));
+            if (!scripts.length) {
+                printError("No typecheck, lint, test, or build npm scripts were detected.");
+                return "handled";
+            }
+            if (!(await state.confirm(`Run quality checks: ${scripts.join(", ")}?`)))
+                return "handled";
+            const tool = createTools({ workspaceRoot: state.cfg.permissions.workspaceRoot }).find((item) => item.def.name === "run_command");
+            for (const script of scripts) {
+                printSystem(`Running ${script}...`);
+                try {
+                    console.log(await tool.execute({ command: npmCommand(), args: ["run", script] }));
+                }
+                catch (error) {
+                    printError(`${script} failed: ${error.message}`);
+                    break;
+                }
+            }
+            return "handled";
+        }
+        case "run": {
+            if (!rest[0]) {
+                printWarn("Usage: /run <program> [args...]");
+                return "handled";
+            }
+            if (!(await state.confirm(`Run ${rest[0]} with ${Math.max(0, rest.length - 1)} argument(s) in the workspace?`)))
+                return "handled";
+            const tool = createTools({ workspaceRoot: state.cfg.permissions.workspaceRoot }).find((item) => item.def.name === "run_command");
+            try {
+                console.log(await tool.execute({ command: rest[0], args: rest.slice(1) }));
+            }
+            catch (error) {
+                printError(error.message);
+            }
+            return "handled";
+        }
         case "review": {
             state.pendingPrompt = `Review the current workspace changes${arg ? ` with focus on ${arg}` : ""}. Inspect the Git diff, identify correctness, security, and test issues, and report findings by severity.`;
             return "handled";
@@ -387,6 +521,32 @@ export async function handleCommand(input, state) {
                 return "handled";
             }
             state.pendingPrompt = `Diagnose and fix this workspace problem, using tools and tests as needed: ${arg}`;
+            return "handled";
+        }
+        case "explain": {
+            state.pendingPrompt = `Explain ${arg || "the current workspace architecture"} clearly. Inspect the relevant code first and cite concrete files and symbols.`;
+            return "handled";
+        }
+        case "refactor":
+        case "testgen":
+        case "docs": {
+            if (!arg) {
+                printWarn(`Usage: /${cmd} <target>`);
+                return "handled";
+            }
+            state.pendingPrompt = cmd === "refactor"
+                ? `Refactor ${arg}. Preserve behavior, keep the change focused, and verify it with relevant tests.`
+                : cmd === "testgen"
+                    ? `Create meaningful tests for ${arg}. Cover success, edge, and failure paths, then run them.`
+                    : `Create or improve documentation for ${arg}. Keep it accurate, practical, and consistent with the codebase.`;
+            return "handled";
+        }
+        case "security": {
+            state.pendingPrompt = `Audit ${arg || "the current workspace changes"} for security weaknesses. Inspect the code, rank findings by severity, and provide actionable fixes.`;
+            return "handled";
+        }
+        case "summarize": {
+            state.pendingPrompt = "Summarize the current work: goal, relevant changes, Git state, verification completed, remaining risks, and recommended next action.";
             return "handled";
         }
         case "tools": {
@@ -450,6 +610,44 @@ export async function handleCommand(input, state) {
             }
             return "handled";
         }
+        case "resume": {
+            try {
+                state.messages = loadSession("autosave");
+                printOk(`Resumed autosave (${state.messages.length} messages).`);
+            }
+            catch {
+                printError("No automatic recovery session is available.");
+            }
+            return "handled";
+        }
+        case "branch": {
+            const name = arg || defaultSessionName();
+            try {
+                saveSession(name, state.messages);
+                printOk(`Conversation branched as "${name}".`);
+            }
+            catch (error) {
+                printError(error.message);
+            }
+            return "handled";
+        }
+        case "export": {
+            if (!arg || !/\.(md|json)$/i.test(arg)) {
+                printWarn("Usage: /export <file.md|file.json>");
+                return "handled";
+            }
+            if (!(await state.confirm(`Export this conversation to ${arg}?`)))
+                return "handled";
+            const extension = arg.toLowerCase().endsWith(".json") ? ".json" : ".md";
+            const tool = createTools({ workspaceRoot: state.cfg.permissions.workspaceRoot }).find((item) => item.def.name === "write_file");
+            try {
+                console.log(await tool.execute({ path: arg, content: serializeConversation(state.messages, extension) }));
+            }
+            catch (error) {
+                printError(error.message);
+            }
+            return "handled";
+        }
         case "sessions": {
             const names = listSessions();
             if (!names.length)
@@ -468,6 +666,22 @@ export async function handleCommand(input, state) {
                 costLine = ` — est. cost: $${cost.toFixed(4)}`;
             }
             printSystem(`Cumulative usage — prompt tokens: ${state.usage.promptTokens}, completion tokens: ${state.usage.completionTokens}${costLine}`);
+            return "handled";
+        }
+        case "usage": {
+            if (rest[0] === "reset") {
+                if (await state.confirm(`Reset locally recorded usage for ${state.cfg.activeProfile}?`)) {
+                    clearProfileUsage(state.cfg.activeProfile);
+                    printOk("Local usage counter reset. Provider billing data is unchanged.");
+                }
+                return "handled";
+            }
+            if (rest[0]) {
+                printWarn("Usage: /usage [reset]");
+                return "handled";
+            }
+            const entry = loadUsageLedger().profiles[state.cfg.activeProfile];
+            printSystem(entry ? `Recorded usage for ${state.cfg.activeProfile}: ${(entry.promptTokens + entry.completionTokens).toLocaleString("en-US")} tokens (${entry.promptTokens.toLocaleString("en-US")} input, ${entry.completionTokens.toLocaleString("en-US")} output).` : `No recorded usage for ${state.cfg.activeProfile}.`);
             return "handled";
         }
         case "limit": {

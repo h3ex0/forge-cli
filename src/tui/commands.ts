@@ -1,12 +1,14 @@
 import fs from "node:fs";
 import type { ForgeConfig, PermissionMode } from "../config.js";
 import type { ChatMessage } from "../providers/types.js";
-import { loadSession, saveSession, defaultSessionName } from "../session.js";
+import { loadSession, saveSession, defaultSessionName, serializeConversation } from "../session.js";
 import { parseSlashCommand } from "../commands/parser.js";
 import { slashCommandNames } from "../commands/registry.js";
 import { activateLocalModel } from "../runtime/service.js";
 import { createTools } from "../tools/index.js";
 import { detectProject, loadProjectInstructions } from "../project.js";
+import { clearProfileUsage, loadUsageLedger } from "../usage-store.js";
+import { resolveWorkspacePath } from "../security/workspace.js";
 
 export type TuiOverlay = "help" | "commands" | "models" | "context" | "sessions";
 
@@ -21,7 +23,8 @@ export type TuiCommandResult =
   | { type: "model-info"; reference: string }
   | { type: "model-pull"; reference: string }
   | { type: "runtime"; operation: "list" | "status" | "start" | "stop"; kind?: string; modelPath?: string }
-  | { type: "tool"; name: string; args: Record<string, unknown> };
+  | { type: "tool"; name: string; args: Record<string, unknown> }
+  | { type: "tool-sequence"; tools: Array<{ name: string; args: Record<string, unknown> }> };
 
 export interface TuiCommandContext {
   config: ForgeConfig;
@@ -129,6 +132,20 @@ export function executeTuiCommand(input: string, context: TuiCommandContext): Tu
       catch { return { type: "notice", message: `Could not load session ${arg}.` }; }
     }
     case "sessions": return { type: "overlay", overlay: "sessions" };
+    case "resume": {
+      try { return { type: "load", messages: loadSession("autosave"), name: "autosave" }; }
+      catch { return { type: "notice", message: "No automatic recovery session is available." }; }
+    }
+    case "branch": {
+      const name = arg || defaultSessionName();
+      try { saveSession(name, context.messages); return { type: "notice", message: `Conversation branched as ${name}.` }; }
+      catch (error) { return { type: "notice", message: error instanceof Error ? error.message : String(error) }; }
+    }
+    case "export": {
+      if (!arg || !/\.(md|json)$/i.test(arg)) return { type: "notice", message: "Usage: /export <file.md|file.json>" };
+      const extension = arg.toLowerCase().endsWith(".json") ? ".json" : ".md";
+      return { type: "tool", name: "write_file", args: { path: arg, content: serializeConversation(context.messages, extension) } };
+    }
     case "history": return { type: "notice", message: `${context.messages.filter((message) => message.role !== "system").length} conversation messages are available in scrollback.` };
     case "instructions": {
       const items = loadProjectInstructions(config.permissions.workspaceRoot);
@@ -139,7 +156,24 @@ export function executeTuiCommand(input: string, context: TuiCommandContext): Tu
       return { type: "notice", message: `Languages: ${project.languages.join(", ") || "unknown"} · package manager: ${project.packageManager ?? "none"} · Git: ${project.git ? "yes" : "no"} · scripts: ${project.scripts.join(", ") || "none"}` };
     }
     case "tree": return { type: "tool", name: "file_tree", args: { pattern: arg || "**/*" } };
+    case "read": {
+      if (!parsed.args[0]) return { type: "notice", message: "Usage: /read <file> [start:end]" };
+      const range = parsed.args[1]?.match(/^(\d+):(\d+)$/);
+      if (parsed.args[1] && !range) return { type: "notice", message: "Line range must use start:end, for example 10:40." };
+      return { type: "tool", name: "read_file", args: { path: parsed.args[0], startLine: range ? Number(range[1]) : undefined, endLine: range ? Number(range[2]) : undefined } };
+    }
+    case "open": {
+      if (!arg) return { type: "notice", message: "Usage: /open <file>" };
+      try {
+        const full = resolveWorkspacePath(config.permissions.workspaceRoot, arg);
+        context.contextFiles.set(arg, fs.readFileSync(full, "utf-8").slice(0, 48_000));
+        return { type: "notice", message: `Pinned ${arg}.` };
+      } catch (error) { return { type: "notice", message: `Could not pin file: ${error instanceof Error ? error.message : String(error)}` }; }
+    }
+    case "search": return parsed.args[0] ? { type: "tool", name: "grep_search", args: { pattern: parsed.args[0], glob: parsed.args[1] ?? "**/*" } } : { type: "notice", message: "Usage: /search <regex> [glob]" };
+    case "files": return { type: "tool", name: "glob_search", args: { pattern: arg || "**/*" } };
     case "diff": return { type: "tool", name: "git_diff", args: { args: parsed.args } };
+    case "changed": return { type: "tool", name: "git_status", args: { args: ["--short"] } };
     case "git": {
       const sub = parsed.args[0] ?? "status";
       if (!( ["status", "diff", "log"] as string[]).includes(sub)) return { type: "notice", message: "Usage: /git status|diff|log" };
@@ -152,11 +186,33 @@ export function executeTuiCommand(input: string, context: TuiCommandContext): Tu
       if (!project.scripts.includes(script)) return { type: "notice", message: `No npm script named ${script} was detected.` };
       return { type: "tool", name: "run_command", args: { command: process.platform === "win32" ? "npm.cmd" : "npm", args: ["run", script] } };
     }
+    case "lint":
+    case "format":
+    case "typecheck": {
+      const project = detectProject(config.permissions.workspaceRoot);
+      const candidates = parsed.name === "lint" ? ["lint"] : parsed.name === "format" ? ["format", "fmt"] : ["typecheck", "check:types"];
+      const requested = parsed.args[0];
+      const script = requested ? (project.scripts.includes(requested) ? requested : undefined) : candidates.find((item) => project.scripts.includes(item));
+      if (!script) return { type: "notice", message: requested ? `No npm script named ${requested} was detected.` : `No ${parsed.name} npm script was detected.` };
+      return { type: "tool", name: "run_command", args: { command: process.platform === "win32" ? "npm.cmd" : "npm", args: ["run", script] } };
+    }
+    case "check": {
+      const project = detectProject(config.permissions.workspaceRoot);
+      const scripts = ["typecheck", "lint", "test", "build"].filter((script) => project.scripts.includes(script));
+      return scripts.length ? { type: "tool-sequence", tools: scripts.map((script) => ({ name: "run_command", args: { command: process.platform === "win32" ? "npm.cmd" : "npm", args: ["run", script] } })) } : { type: "notice", message: "No typecheck, lint, test, or build npm scripts were detected." };
+    }
+    case "run": return parsed.args[0] ? { type: "tool", name: "run_command", args: { command: parsed.args[0], args: parsed.args.slice(1) } } : { type: "notice", message: "Usage: /run <program> [args...]" };
     case "tools": return { type: "notice", message: createTools({ workspaceRoot: config.permissions.workspaceRoot }).map((tool) => `${tool.def.name} [${tool.risk}]`).join(" · ") };
     case "doctor": return { type: "runtime", operation: "status" };
     case "review": return { type: "prompt", prompt: `Review the current workspace changes${arg ? ` with focus on ${arg}` : ""}. Inspect the Git diff and report correctness, security, and test findings by severity.` };
     case "plan": return arg ? { type: "prompt", prompt: `Create a decision-complete implementation plan for this workspace goal: ${arg}` } : { type: "notice", message: "Usage: /plan <goal>" };
     case "fix": return arg ? { type: "prompt", prompt: `Diagnose and fix this workspace problem, using tools and tests as needed: ${arg}` } : { type: "notice", message: "Usage: /fix <problem>" };
+    case "explain": return { type: "prompt", prompt: `Explain ${arg || "the current workspace architecture"} clearly. Inspect the relevant code first and cite concrete files and symbols.` };
+    case "refactor": return arg ? { type: "prompt", prompt: `Refactor ${arg}. Preserve behavior, keep the change focused, and verify it with relevant tests.` } : { type: "notice", message: "Usage: /refactor <target>" };
+    case "testgen": return arg ? { type: "prompt", prompt: `Create meaningful tests for ${arg}. Cover success, edge, and failure paths, then run them.` } : { type: "notice", message: "Usage: /testgen <target>" };
+    case "docs": return arg ? { type: "prompt", prompt: `Create or improve documentation for ${arg}. Keep it accurate, practical, and consistent with the codebase.` } : { type: "notice", message: "Usage: /docs <target>" };
+    case "security": return { type: "prompt", prompt: `Audit ${arg || "the current workspace changes"} for security weaknesses. Inspect the code, rank findings by severity, and provide actionable fixes.` };
+    case "summarize": return { type: "prompt", prompt: "Summarize the current work: goal, relevant changes, Git state, verification completed, remaining risks, and recommended next action." };
     case "ui": {
       if (arg !== "inline" && arg !== "tui") return { type: "notice", message: `UI mode is ${config.ui.mode}. Usage: /ui inline|tui` };
       config.ui.mode = arg;
@@ -187,6 +243,15 @@ export function executeTuiCommand(input: string, context: TuiCommandContext): Tu
         return { type: "notice", message: "Subscription limit configured." };
       }
       return { type: "notice", message: "Usage: /limit show|set|clear" };
+    }
+    case "usage": {
+      if (parsed.args[0] === "reset") {
+        clearProfileUsage(config.activeProfile);
+        return { type: "notice", message: "Local usage counter reset. Provider billing data is unchanged." };
+      }
+      if (parsed.args[0]) return { type: "notice", message: "Usage: /usage [reset]" };
+      const entry = loadUsageLedger().profiles[config.activeProfile];
+      return { type: "notice", message: entry ? `Recorded usage: ${(entry.promptTokens + entry.completionTokens).toLocaleString("en-US")} tokens (${entry.promptTokens.toLocaleString("en-US")} input, ${entry.completionTokens.toLocaleString("en-US")} output).` : `No recorded usage for ${config.activeProfile}.` };
     }
     case "provider": {
       const sub = parsed.args[0] ?? "list";
