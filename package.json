@@ -1,0 +1,51 @@
+{
+  "name": "forge-cli",
+  "version": "0.1.0",
+  "description": "A local-first, multi-provider AI terminal agent with streaming chat, tool use, session management, and cost visibility.",
+  "type": "module",
+  "bin": {
+    "forge": "./bin/forge.js"
+  },
+  "files": [
+    "bin",
+    "dist",
+    "docs/adr",
+    "README.md",
+    "ROADMAP.md",
+    "SECURITY.md"
+  ],
+  "keywords": [
+    "ai",
+    "cli",
+    "agent",
+    "openai",
+    "anthropic",
+    "gemini",
+    "developer-tools"
+  ],
+  "scripts": {
+    "clean": "node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\"",
+    "build": "npm run clean && tsc -p .",
+    "dev": "tsc -p . -w",
+    "start": "node bin/forge.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "chalk": "^5.3.0",
+    "cli-highlight": "^2.1.11",
+    "fast-glob": "^3.3.2",
+    "figlet": "^1.7.0",
+    "gradient-string": "^2.0.2",
+    "marked": "^12.0.2",
+    "marked-terminal": "^7.1.0",
+    "ora": "^8.0.1"
+  },
+  "devDependencies": {
+    "@types/figlet": "^1.5.8",
+    "@types/gradient-string": "^1.1.6",
+    "@types/node": "^20.14.0",
+    "typescript": "^5.5.4"
+  }
+}

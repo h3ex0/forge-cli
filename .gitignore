@@ -1,0 +1,22 @@
+node_modules/
+
+# Local secrets and Forge state
+.env
+.env.*
+!.env.example
+.forge/
+
+# Logs and coverage
+*.log
+coverage/
+.nyc_output/
+
+# Editor and OS files
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+
+# TypeScript build cache
+*.tsbuildinfo
+
