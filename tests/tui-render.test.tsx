@@ -31,6 +31,7 @@ describe("Forge TUI rendering", () => {
     expect(output).toContain("FORGE");
     expect(output).toContain("tokens 0");
     expect(output).toContain("[Commands]");
-    expect(output).toContain("mouse on");
+    expect(output).toContain("[Mouse off]");
+    expect(output).toContain("drag selects text");
   });
 });

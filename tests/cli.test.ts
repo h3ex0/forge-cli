@@ -9,7 +9,7 @@ describe("top-level CLI", () => {
   });
 
   it("reports the v0.3 release", () => {
-    expect(createProgram().version()).toBe("0.5.0");
+    expect(createProgram().version()).toBe("0.5.1");
   });
 
   it("uses TUI only for capable interactive terminals", () => {

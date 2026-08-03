@@ -9,7 +9,7 @@ Forge is a local-first AI coding CLI with a TUI-first workspace, streaming chat,
 ![Node.js](https://img.shields.io/badge/Node.js-%3E%3D22-339933?logo=node.js&logoColor=white)
 ![TypeScript](https://img.shields.io/badge/TypeScript-5.x-3178C6?logo=typescript&logoColor=white)
 ![Local models](https://img.shields.io/badge/local-Ollama%20%7C%20LM%20Studio%20%7C%20llama.cpp-7C3AED)
-![Version](https://img.shields.io/badge/version-0.5.0-orange)
+![Version](https://img.shields.io/badge/version-0.5.1-orange)
 
 </div>
 
@@ -114,6 +114,7 @@ The TUI and inline REPL share the same agent engine, tool loop, permission decis
 | `Ctrl+P` | Search workspace files and pin context |
 | `Ctrl+M` | Switch cloud profiles or local models |
 | `Ctrl+S` | Browse saved and automatic sessions |
+| `Ctrl+T` | Toggle mouse capture on or off |
 | `Tab` | Move focus between visible panes |
 | `Page Up` / `Page Down` | Scroll conversation history |
 | `Ctrl+J` | Insert a newline in the composer |
@@ -121,7 +122,7 @@ The TUI and inline REPL share the same agent engine, tool loop, permission decis
 | `Ctrl+C` | Cancel active work; exit when idle |
 | `?` | Open help from an empty composer |
 
-Mouse controls are enabled by default in supported terminals. Click panes to focus them, click footer actions and overlay rows to activate them, use the wheel to scroll conversations and lists, and click Allow or Deny in approval dialogs. `/mouse off` disables terminal mouse tracking while preserving every keyboard workflow.
+Native text selection is the default: drag normally to select and copy terminal text. Press `Ctrl+T` or run `/mouse on` when you want clickable panes, footer actions, overlay rows, wheel scrolling, and approval buttons. Click `[Mouse on]` or press `Ctrl+T` again to return to selection mode. Many terminals also support `Shift+drag` for selection while mouse capture is active.
 
 Commands, model names, files, and sessions are searchable inside their overlays. Prompts typed while Forge is working are queued for the next turn. The TUI autosaves conversations as `autosave` and records `recovery-latest` before approved write/process operations.
 
@@ -182,7 +183,7 @@ Offline mode removes network tools and refuses cloud-backed one-shot prompts.
 
 ## Configuration and credentials
 
-Forge uses a versioned configuration at `~/.forge/config.json`. Existing configurations migrate automatically to schema v4 with the TUI-first and mouse-enabled defaults. Use `/mouse off` to keep the TUI keyboard-only, or `/ui inline` or `forge chat` to retain the classic experience. Remote API keys are stored through the operating-system credential manager when available; headless environments can use:
+Forge uses a versioned configuration at `~/.forge/config.json`. Existing configurations migrate automatically to schema v5 with the TUI-first, selection-friendly default. Use `Ctrl+T` or `/mouse on` for clickable controls, or `/ui inline` or `forge chat` to retain the classic experience. Remote API keys are stored through the operating-system credential manager when available; headless environments can use:
 
 ```text
 FORGE_API_KEY_<PROFILE_NAME>

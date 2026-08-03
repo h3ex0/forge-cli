@@ -40,13 +40,13 @@ Forge is evolving into a local-first, provider-independent terminal agent that c
 
 ## Shipped in v0.5 — Mouse workspace and toolbench
 
-- Opt-in/persistent SGR mouse tracking, enabled by default and removable with `/mouse off`.
+- Opt-in/persistent SGR mouse tracking with native terminal text selection as the default.
 - Mouse focus for conversation, activity, context, and composer panes with visible focus borders.
 - Clickable command, file, model, session, and help actions; clickable overlay rows and approval choices.
 - Mouse-wheel scrolling for conversations, activities, and searchable overlays, with keyboard-equivalent pane focus via Tab.
 - Workspace metadata, SHA-256, JSON Pointer, workspace-statistics, and Git-show inspection tools.
 - Workspace-bounded directory creation and no-overwrite file copying behind write approvals.
-- Config schema v4 migration and shared inline/TUI slash commands for every new tool.
+- Config schema v5 migration, instant `Ctrl+T`/footer mouse toggling, and shared inline/TUI slash commands for every new tool.
 
 ## v0.6 — Reliability and recovery
 

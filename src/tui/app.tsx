@@ -128,6 +128,7 @@ export function ForgeTui({ config }: { config: ForgeConfig }): React.ReactElemen
   const modelsButtonRef = React.useRef<DOMElement>(null!);
   const sessionsButtonRef = React.useRef<DOMElement>(null!);
   const helpButtonRef = React.useRef<DOMElement>(null!);
+  const mouseButtonRef = React.useRef<DOMElement>(null!);
   const theme = getTheme(config.ui.theme);
 
   React.useEffect(() => {
@@ -435,6 +436,9 @@ export function ForgeTui({ config }: { config: ForgeConfig }): React.ReactElemen
       if (containsPoint(metrics(modelsButtonRef), mouse.x, mouse.y)) { setOverlay("models"); return; }
       if (containsPoint(metrics(sessionsButtonRef), mouse.x, mouse.y)) { setOverlay("sessions"); return; }
       if (containsPoint(metrics(helpButtonRef), mouse.x, mouse.y)) { setOverlay("help"); return; }
+      if (containsPoint(metrics(mouseButtonRef), mouse.x, mouse.y)) {
+        config.ui.mouse = false; saveConfig(config); setNotice("Mouse capture off — drag to select text; Ctrl+T turns it back on."); setRevision((value) => value + 1); return;
+      }
       for (const [index, node] of activityItemRefs.current) {
         if (containsPoint(measureElement(node), mouse.x, mouse.y)) { setFocus("activity"); setSelectedActivity(index); return; }
       }
@@ -455,6 +459,13 @@ export function ForgeTui({ config }: { config: ForgeConfig }): React.ReactElemen
     if (key.ctrl && character === "m") { setOverlay("models"); return; }
     if (key.ctrl && character === "p") { setOverlay("context"); return; }
     if (key.ctrl && character === "s") { setOverlay("sessions"); return; }
+    if (key.ctrl && character === "t") {
+      config.ui.mouse = !config.ui.mouse;
+      saveConfig(config);
+      setNotice(config.ui.mouse ? "Mouse capture on — click controls; Shift+drag may select text in supported terminals." : "Mouse capture off — drag to select and copy text normally.");
+      setRevision((value) => value + 1);
+      return;
+    }
     if (key.tab) {
       const order: TuiFocus[] = wide ? ["activity", "conversation", "context", "composer"] : medium ? ["conversation", "context", "composer"] : ["conversation", "composer"];
       setFocus((current) => order[(order.indexOf(current) + 1) % order.length]);
@@ -564,7 +575,8 @@ export function ForgeTui({ config }: { config: ForgeConfig }): React.ReactElemen
       <Box ref={modelsButtonRef}><Text color={theme.muted}>[Models] ^M</Text></Box>
       <Box ref={sessionsButtonRef}><Text color={theme.muted}>[Sessions] ^S</Text></Box>
       <Box ref={helpButtonRef}><Text color={theme.muted}>[Help] ?</Text></Box>
-      <Text color={theme.muted}> Tab panes · wheel scroll · {config.ui.mouse ? "mouse on" : "mouse off"}</Text>
+      <Box ref={mouseButtonRef}><Text color={config.ui.mouse ? theme.warning : theme.muted}>[Mouse {config.ui.mouse ? "on" : "off"}] ^T</Text></Box>
+      <Text color={theme.muted}> Tab panes · {config.ui.mouse ? "Shift+drag select" : "drag selects text"}</Text>
     </Box>
 
     {overlay && <Overlay boxRef={overlayRef} itemRefs={overlayItemRefs} title={overlay.toUpperCase()} query={overlayQuery} items={filteredOverlayItems} selected={selected} theme={theme} footer="Type/filter · click or ↑/↓ + Enter · wheel scroll · Esc close" />}

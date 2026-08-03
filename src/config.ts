@@ -29,7 +29,7 @@ export interface Profile {
 }
 
 export interface ForgeConfig {
-  schemaVersion: 4;
+  schemaVersion: 5;
   activeProfile: string;
   profiles: Record<string, Profile>;
   permissions: { mode: PermissionMode; workspaceRoot: string };
@@ -58,7 +58,7 @@ const profileSchema = z.object({
 });
 
 const configSchema = z.object({
-  schemaVersion: z.literal(4),
+  schemaVersion: z.literal(5),
   activeProfile: z.string(),
   profiles: z.record(z.string(), profileSchema),
   permissions: z.object({
@@ -78,12 +78,12 @@ const configSchema = z.object({
 });
 
 export const DEFAULT_CONFIG: ForgeConfig = {
-  schemaVersion: 4,
+  schemaVersion: 5,
   activeProfile: "",
   profiles: {},
   permissions: { mode: "balanced", workspaceRoot: process.cwd() },
   routing: { mode: "manual", offline: false, askBeforeCloud: true },
-  ui: { mode: "tui", theme: "flame", mouse: true },
+  ui: { mode: "tui", theme: "flame", mouse: false },
   runtimes: {
     ollama: { baseURL: "http://127.0.0.1:11434/v1", executable: "ollama" },
     lmstudio: { baseURL: "http://127.0.0.1:1234/v1", executable: "lms" },
@@ -95,14 +95,18 @@ export const DEFAULT_CONFIG: ForgeConfig = {
 export function migrateConfig(raw: unknown): ForgeConfig {
   if (!raw || typeof raw !== "object") return structuredClone(DEFAULT_CONFIG);
   const candidate = raw as Record<string, unknown>;
-  if (candidate.schemaVersion === 4) return configSchema.parse(candidate);
+  if (candidate.schemaVersion === 5) return configSchema.parse(candidate);
+
+  if (candidate.schemaVersion === 4) {
+    return configSchema.parse({ ...candidate, schemaVersion: 5, ui: { ...((candidate.ui as object | undefined) ?? {}), mouse: false } });
+  }
 
   if (candidate.schemaVersion === 3) {
-    return configSchema.parse({ ...candidate, schemaVersion: 4, ui: { ...((candidate.ui as object | undefined) ?? {}), mouse: true } });
+    return configSchema.parse({ ...candidate, schemaVersion: 5, ui: { ...((candidate.ui as object | undefined) ?? {}), mouse: false } });
   }
 
   if (candidate.schemaVersion === 2) {
-    return configSchema.parse({ ...candidate, schemaVersion: 4, ui: { ...((candidate.ui as object | undefined) ?? {}), mode: "tui", mouse: true } });
+    return configSchema.parse({ ...candidate, schemaVersion: 5, ui: { ...((candidate.ui as object | undefined) ?? {}), mode: "tui", mouse: false } });
   }
 
   const legacyProfiles = (candidate.profiles && typeof candidate.profiles === "object" ? candidate.profiles : {}) as Record<string, unknown>;

@@ -15,7 +15,7 @@ describe("configuration migration", () => {
       },
     });
 
-    expect(result.schemaVersion).toBe(4);
+    expect(result.schemaVersion).toBe(5);
     expect(result.activeProfile).toBe("signor");
     expect(result.profiles.signor).toMatchObject({
       kind: "remote",
@@ -25,7 +25,7 @@ describe("configuration migration", () => {
     expect(result.permissions.mode).toBe("balanced");
     expect(result.runtimes.ollama.baseURL).toBe("http://127.0.0.1:11434/v1");
     expect(result.ui.mode).toBe("tui");
-    expect(result.ui.mouse).toBe(true);
+    expect(result.ui.mouse).toBe(false);
   });
 
   it("moves v2 installations to the new TUI-first default", () => {
@@ -34,15 +34,20 @@ describe("configuration migration", () => {
       schemaVersion: 2,
       ui: { mode: "inline", theme: "flame" },
     });
-    expect(result.schemaVersion).toBe(4);
+    expect(result.schemaVersion).toBe(5);
     expect(result.ui.mode).toBe("tui");
-    expect(result.ui.mouse).toBe(true);
+    expect(result.ui.mouse).toBe(false);
   });
 
-  it("adds mouse controls when migrating v3 configurations", () => {
+  it("adds selection-first mouse controls when migrating v3 configurations", () => {
     const previous = { ...structuredClone(DEFAULT_CONFIG), schemaVersion: 3, ui: { mode: "tui", theme: "cool" } };
     const result = migrateConfig(previous);
-    expect(result).toMatchObject({ schemaVersion: 4, ui: { mode: "tui", theme: "cool", mouse: true } });
+    expect(result).toMatchObject({ schemaVersion: 5, ui: { mode: "tui", theme: "cool", mouse: false } });
+  });
+
+  it("migrates v4 mouse capture to the selection-first default", () => {
+    const previous = { ...structuredClone(DEFAULT_CONFIG), schemaVersion: 4, ui: { mode: "tui", theme: "flame", mouse: true } };
+    expect(migrateConfig(previous)).toMatchObject({ schemaVersion: 5, ui: { mouse: false } });
   });
 
   it("returns isolated defaults", () => {
