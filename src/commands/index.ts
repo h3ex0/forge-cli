@@ -333,6 +333,25 @@ export async function handleCommand(input: string, state: AppState): Promise<Com
       try { console.log(await tool.execute({ pattern: arg || "**/*" })); } catch (error) { printError((error as Error).message); }
       return "handled";
     }
+    case "inspect":
+    case "hash": {
+      if (!arg) { printWarn(`Usage: /${cmd} <path>`); return "handled"; }
+      const toolName = cmd === "inspect" ? "file_info" : "hash_file";
+      const tool = createTools({ workspaceRoot: state.cfg.permissions.workspaceRoot }).find((item) => item.def.name === toolName)!;
+      try { console.log(await tool.execute({ path: arg })); } catch (error) { printError((error as Error).message); }
+      return "handled";
+    }
+    case "json": {
+      if (!rest[0]) { printWarn("Usage: /json <file> [pointer]"); return "handled"; }
+      const tool = createTools({ workspaceRoot: state.cfg.permissions.workspaceRoot }).find((item) => item.def.name === "json_query")!;
+      try { console.log(await tool.execute({ path: rest[0], pointer: rest[1] ?? "" })); } catch (error) { printError((error as Error).message); }
+      return "handled";
+    }
+    case "stats": {
+      const tool = createTools({ workspaceRoot: state.cfg.permissions.workspaceRoot }).find((item) => item.def.name === "workspace_stats")!;
+      try { console.log(await tool.execute({ pattern: arg || "**/*" })); } catch (error) { printError((error as Error).message); }
+      return "handled";
+    }
     case "changed": {
       const tool = createTools({ workspaceRoot: state.cfg.permissions.workspaceRoot }).find((item) => item.def.name === "git_status")!;
       try { console.log(await tool.execute({ args: ["--short"] })); } catch (error) { printError((error as Error).message); }
@@ -370,6 +389,13 @@ export async function handleCommand(input: string, state: AppState): Promise<Com
       }
       const tool = createTools({ workspaceRoot: state.cfg.permissions.workspaceRoot }).find((item) => item.def.name === `git_${sub}`)!;
       try { console.log(await tool.execute({ args: cmd === "git" ? rest.slice(1) : rest })); } catch (error) { printError((error as Error).message); }
+      return "handled";
+    }
+    case "show": {
+      if (!rest[0]) { printWarn("Usage: /show <revision> [path]"); return "handled"; }
+      const args = rest[1] ? [rest[0], "--", rest[1]] : [rest[0]];
+      const tool = createTools({ workspaceRoot: state.cfg.permissions.workspaceRoot }).find((item) => item.def.name === "git_show")!;
+      try { console.log(await tool.execute({ args })); } catch (error) { printError((error as Error).message); }
       return "handled";
     }
     case "test":
@@ -415,6 +441,19 @@ export async function handleCommand(input: string, state: AppState): Promise<Com
       if (!(await state.confirm(`Run ${rest[0]} with ${Math.max(0, rest.length - 1)} argument(s) in the workspace?`))) return "handled";
       const tool = createTools({ workspaceRoot: state.cfg.permissions.workspaceRoot }).find((item) => item.def.name === "run_command")!;
       try { console.log(await tool.execute({ command: rest[0], args: rest.slice(1) })); } catch (error) { printError((error as Error).message); }
+      return "handled";
+    }
+    case "mkdir":
+    case "copy": {
+      if ((cmd === "mkdir" && !rest[0]) || (cmd === "copy" && rest.length !== 2)) {
+        printWarn(cmd === "mkdir" ? "Usage: /mkdir <directory>" : "Usage: /copy <source> <destination>");
+        return "handled";
+      }
+      const toolName = cmd === "mkdir" ? "make_directory" : "copy_file";
+      if (!(await state.confirm(cmd === "mkdir" ? `Create directory ${rest[0]}?` : `Copy ${rest[0]} to ${rest[1]} without overwriting?`))) return "handled";
+      const tool = createTools({ workspaceRoot: state.cfg.permissions.workspaceRoot }).find((item) => item.def.name === toolName)!;
+      const args = cmd === "mkdir" ? { path: rest[0] } : { source: rest[0], destination: rest[1] };
+      try { console.log(await tool.execute(args)); } catch (error) { printError((error as Error).message); }
       return "handled";
     }
     case "review": {
@@ -614,6 +653,14 @@ export async function handleCommand(input: string, state: AppState): Promise<Com
       state.cfg.ui.mode = mode;
       state.persistConfig();
       printOk(`UI preference set to ${mode}; it will apply on the next launch.`);
+      return "handled";
+    }
+    case "mouse": {
+      const enabled = rest[0];
+      if (enabled !== "on" && enabled !== "off") { printSystem(`Mouse controls: ${state.cfg.ui.mouse ? "on" : "off"}. Usage: /mouse on|off`); return "handled"; }
+      state.cfg.ui.mouse = enabled === "on";
+      state.persistConfig();
+      printOk(`Mouse controls ${enabled}; the setting applies immediately in the TUI.`);
       return "handled";
     }
     default:

@@ -9,7 +9,7 @@ Forge is a local-first AI coding CLI with a TUI-first workspace, streaming chat,
 ![Node.js](https://img.shields.io/badge/Node.js-%3E%3D22-339933?logo=node.js&logoColor=white)
 ![TypeScript](https://img.shields.io/badge/TypeScript-5.x-3178C6?logo=typescript&logoColor=white)
 ![Local models](https://img.shields.io/badge/local-Ollama%20%7C%20LM%20Studio%20%7C%20llama.cpp-7C3AED)
-![Version](https://img.shields.io/badge/version-0.4.0-orange)
+![Version](https://img.shields.io/badge/version-0.5.0-orange)
 
 </div>
 
@@ -114,11 +114,14 @@ The TUI and inline REPL share the same agent engine, tool loop, permission decis
 | `Ctrl+P` | Search workspace files and pin context |
 | `Ctrl+M` | Switch cloud profiles or local models |
 | `Ctrl+S` | Browse saved and automatic sessions |
+| `Tab` | Move focus between visible panes |
 | `Page Up` / `Page Down` | Scroll conversation history |
 | `Ctrl+J` | Insert a newline in the composer |
 | `Esc` | Close an overlay or cancel the active turn |
 | `Ctrl+C` | Cancel active work; exit when idle |
 | `?` | Open help from an empty composer |
+
+Mouse controls are enabled by default in supported terminals. Click panes to focus them, click footer actions and overlay rows to activate them, use the wheel to scroll conversations and lists, and click Allow or Deny in approval dialogs. `/mouse off` disables terminal mouse tracking while preserving every keyboard workflow.
 
 Commands, model names, files, and sessions are searchable inside their overlays. Prompts typed while Forge is working are queued for the next turn. The TUI autosaves conversations as `autosave` and records `recovery-latest` before approved write/process operations.
 
@@ -154,10 +157,10 @@ Forge keeps a protected local cumulative token ledger per profile and compares i
 | Models and providers | `/model list`, `/model use`, `/model info`, `/model pull`, `/provider list`, `/provider use`, `/provider add` |
 | Local runtimes | `/runtime list`, `/runtime status`, `/runtime start`, `/runtime stop` |
 | Safety and routing | `/mode read-only\|balanced\|autonomous`, `/route manual\|auto`, `/offline on\|off`, `/workspace [path]` |
-| Project context | `/instructions`, `/tree`, `/index`, `/context list\|add\|drop\|clear`, `/read`, `/open`, `/search`, `/files` |
-| Developer workflow | `/diff`, `/changed`, `/git status\|diff\|log`, `/test`, `/build`, `/lint`, `/format`, `/typecheck`, `/check`, `/run` |
+| Project context | `/instructions`, `/tree`, `/index`, `/context list\|add\|drop\|clear`, `/read`, `/open`, `/search`, `/files`, `/inspect`, `/hash`, `/json`, `/stats` |
+| Developer workflow | `/diff`, `/changed`, `/git status\|diff\|log`, `/show`, `/test`, `/build`, `/lint`, `/format`, `/typecheck`, `/check`, `/run`, `/mkdir`, `/copy` |
 | Agent workflows | `/review`, `/plan`, `/fix`, `/explain`, `/refactor`, `/testgen`, `/docs`, `/security`, `/summarize` |
-| Sessions and UI | `/new`, `/history`, `/save`, `/checkpoint`, `/load`, `/resume`, `/branch`, `/export`, `/sessions`, `/cost`, `/usage`, `/limit`, `/status`, `/doctor`, `/tools`, `/ui`, `/theme` |
+| Sessions and UI | `/new`, `/history`, `/save`, `/checkpoint`, `/load`, `/resume`, `/branch`, `/export`, `/sessions`, `/cost`, `/usage`, `/limit`, `/status`, `/doctor`, `/tools`, `/ui`, `/theme`, `/mouse on\|off` |
 
 Run `/help` for the authoritative command list.
 
@@ -173,13 +176,13 @@ Forge classifies every tool as `read`, `write`, `process`, `network`, `credentia
 | `balanced` (default) | Allow | Ask | Ask |
 | `autonomous` | Allow | Allow | Ask |
 
-The current toolset includes ranged file reads, atomic writes and exact edits, directory/tree/glob/grep search, structured process execution, compatibility shell execution, Git status/diff/log, and guarded web fetching. Filesystem tools remain inside the configured workspace after canonical path and link checks. Network tools reject credentials in URLs and private, loopback, link-local, or metadata destinations.
+The current toolset includes ranged file reads, metadata and SHA-256 inspection, JSON Pointer queries, workspace statistics, atomic writes and exact edits, no-overwrite copying, directory creation, tree/glob/grep search, structured process execution, compatibility shell execution, Git status/diff/log/show, and guarded web fetching. Filesystem tools remain inside the configured workspace after canonical path and link checks. Network tools reject credentials in URLs and private, loopback, link-local, or metadata destinations.
 
 Offline mode removes network tools and refuses cloud-backed one-shot prompts.
 
 ## Configuration and credentials
 
-Forge uses a versioned configuration at `~/.forge/config.json`. Existing configurations migrate automatically to schema v3 and the TUI-first default. Use `/ui inline` or `forge chat` to retain the classic experience. Remote API keys are stored through the operating-system credential manager when available; headless environments can use:
+Forge uses a versioned configuration at `~/.forge/config.json`. Existing configurations migrate automatically to schema v4 with the TUI-first and mouse-enabled defaults. Use `/mouse off` to keep the TUI keyboard-only, or `/ui inline` or `forge chat` to retain the classic experience. Remote API keys are stored through the operating-system credential manager when available; headless environments can use:
 
 ```text
 FORGE_API_KEY_<PROFILE_NAME>

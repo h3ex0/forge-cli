@@ -50,4 +50,13 @@ describe("TUI commands", () => {
       args: { path: "notes.md", content: expect.stringContaining("## You") },
     });
   });
+
+  it("maps the extended tool pack and persists mouse preference", () => {
+    const value = context();
+    expect(executeTuiCommand("/inspect package.json", value)).toMatchObject({ type: "tool", name: "file_info" });
+    expect(executeTuiCommand("/json package.json /scripts/test", value)).toMatchObject({ type: "tool", name: "json_query" });
+    expect(executeTuiCommand("/copy a.txt b.txt", value)).toMatchObject({ type: "tool", name: "copy_file" });
+    expect(executeTuiCommand("/mouse off", value)).toMatchObject({ type: "notice" });
+    expect(value.config.ui.mouse).toBe(false);
+  });
 });

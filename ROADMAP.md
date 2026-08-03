@@ -38,7 +38,17 @@ Forge is evolving into a local-first, provider-independent terminal agent that c
 - Autosave resume, conversation branching, Markdown/JSON export, and local usage inspection/reset commands.
 - Matching behavior in the inline REPL and full-screen TUI, including palette discovery and visible sequential tool activity.
 
-## v0.5 — Reliability and recovery
+## Shipped in v0.5 — Mouse workspace and toolbench
+
+- Opt-in/persistent SGR mouse tracking, enabled by default and removable with `/mouse off`.
+- Mouse focus for conversation, activity, context, and composer panes with visible focus borders.
+- Clickable command, file, model, session, and help actions; clickable overlay rows and approval choices.
+- Mouse-wheel scrolling for conversations, activities, and searchable overlays, with keyboard-equivalent pane focus via Tab.
+- Workspace metadata, SHA-256, JSON Pointer, workspace-statistics, and Git-show inspection tools.
+- Workspace-bounded directory creation and no-overwrite file copying behind write approvals.
+- Config schema v4 migration and shared inline/TUI slash commands for every new tool.
+
+## v0.6 — Reliability and recovery
 
 - Add bounded provider retries with jitter and useful error classification.
 - Add full filesystem undo journals, richer crash recovery, session export formats, and session deletion.
@@ -47,7 +57,7 @@ Forge is evolving into a local-first, provider-independent terminal agent that c
 - Add redacted structured audit records with retention controls.
 - Add backup and undo journals for workspace mutations.
 
-## v0.6 — Developer workflow
+## v0.7 — Developer workflow
 
 - Add unified patch application with diff previews.
 - Add safe move/delete operations with recoverable behavior.
@@ -56,7 +66,7 @@ Forge is evolving into a local-first, provider-independent terminal agent that c
 - Add tool result caching and bounded parallel read-only tools.
 - Expand machine-readable output across model, session, config, and doctor commands.
 
-## v0.7 — Smart local routing
+## v0.8 — Smart local routing
 
 - Route tasks using health, capabilities, context size, latency, and user policy.
 - Prefer capable local models; disclose and approve escalation to cloud providers.
@@ -64,7 +74,7 @@ Forge is evolving into a local-first, provider-independent terminal agent that c
 - Improve capability detection for Qwen and other model families across runtimes.
 - Add dedicated Git diff, diagnostics, plan, and provider-settings panes to the full-screen workspace.
 
-## v0.8 — Extensibility
+## v0.9 — Extensibility
 
 - Add MCP client support behind the same capability-policy boundary.
 - Add versioned plugin manifests with explicit requested capabilities.

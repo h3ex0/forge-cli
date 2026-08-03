@@ -24,7 +24,7 @@ const profileSchema = z.object({
     }).optional(),
 });
 const configSchema = z.object({
-    schemaVersion: z.literal(3),
+    schemaVersion: z.literal(4),
     activeProfile: z.string(),
     profiles: z.record(z.string(), profileSchema),
     permissions: z.object({
@@ -36,16 +36,16 @@ const configSchema = z.object({
         offline: z.boolean(),
         askBeforeCloud: z.boolean(),
     }),
-    ui: z.object({ mode: z.enum(["inline", "tui"]), theme: z.string() }),
+    ui: z.object({ mode: z.enum(["inline", "tui"]), theme: z.string(), mouse: z.boolean() }),
     runtimes: z.record(z.enum(["ollama", "lmstudio", "llamacpp", "openai-compatible"]), z.object({ baseURL: z.string(), executable: z.string().optional(), modelRoots: z.array(z.string()).optional() })),
 });
 export const DEFAULT_CONFIG = {
-    schemaVersion: 3,
+    schemaVersion: 4,
     activeProfile: "",
     profiles: {},
     permissions: { mode: "balanced", workspaceRoot: process.cwd() },
     routing: { mode: "manual", offline: false, askBeforeCloud: true },
-    ui: { mode: "tui", theme: "flame" },
+    ui: { mode: "tui", theme: "flame", mouse: true },
     runtimes: {
         ollama: { baseURL: "http://127.0.0.1:11434/v1", executable: "ollama" },
         lmstudio: { baseURL: "http://127.0.0.1:1234/v1", executable: "lms" },
@@ -57,10 +57,13 @@ export function migrateConfig(raw) {
     if (!raw || typeof raw !== "object")
         return structuredClone(DEFAULT_CONFIG);
     const candidate = raw;
-    if (candidate.schemaVersion === 3)
+    if (candidate.schemaVersion === 4)
         return configSchema.parse(candidate);
+    if (candidate.schemaVersion === 3) {
+        return configSchema.parse({ ...candidate, schemaVersion: 4, ui: { ...(candidate.ui ?? {}), mouse: true } });
+    }
     if (candidate.schemaVersion === 2) {
-        return configSchema.parse({ ...candidate, schemaVersion: 3, ui: { ...(candidate.ui ?? {}), mode: "tui" } });
+        return configSchema.parse({ ...candidate, schemaVersion: 4, ui: { ...(candidate.ui ?? {}), mode: "tui", mouse: true } });
     }
     const legacyProfiles = (candidate.profiles && typeof candidate.profiles === "object" ? candidate.profiles : {});
     const profiles = {};

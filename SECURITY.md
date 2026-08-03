@@ -10,6 +10,7 @@ Forge is pre-1.0 software. Security fixes are applied to the latest version on t
 
 - Forge runs with the permissions of the current operating-system account; it is not a hardened container or OS sandbox.
 - Filesystem tools are restricted to the configured workspace using canonical path resolution and checks against symlink or Windows-junction escapes.
+- Glob discovery rejects absolute and parent-traversal patterns; metadata, hashing, JSON queries, statistics, directory creation, and no-overwrite copies reuse the same workspace boundary.
 - Tool inputs are validated against JSON Schema before execution.
 - `read-only`, `balanced`, and `autonomous` modes decide whether each risk class is allowed, denied, or requires confirmation.
 - Structured commands use direct process execution. The compatibility `bash_exec` tool is high-risk and always policy-gated.
@@ -18,6 +19,7 @@ Forge is pre-1.0 software. Security fixes are applied to the latest version on t
 - File writes are atomic, tool output is capped, and an agent turn is limited to ten tool iterations.
 - Model and tool text is stripped of terminal control sequences before the TUI renders it.
 - The TUI uses blocking approval overlays and records a recovery session before approved write, process, or shell operations.
+- Mouse reports are interpreted only as local navigation input and cannot bypass tool validation or approval policy.
 - Active provider streams and structured tool processes receive cancellation signals.
 - Offline mode removes network tools and prevents one-shot use of a remote profile.
 - Forge only stops local runtime processes that it recorded as Forge-owned.

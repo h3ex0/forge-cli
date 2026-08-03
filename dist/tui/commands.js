@@ -179,6 +179,10 @@ export function executeTuiCommand(input, context) {
         }
         case "search": return parsed.args[0] ? { type: "tool", name: "grep_search", args: { pattern: parsed.args[0], glob: parsed.args[1] ?? "**/*" } } : { type: "notice", message: "Usage: /search <regex> [glob]" };
         case "files": return { type: "tool", name: "glob_search", args: { pattern: arg || "**/*" } };
+        case "inspect": return arg ? { type: "tool", name: "file_info", args: { path: arg } } : { type: "notice", message: "Usage: /inspect <path>" };
+        case "hash": return arg ? { type: "tool", name: "hash_file", args: { path: arg } } : { type: "notice", message: "Usage: /hash <file>" };
+        case "json": return parsed.args[0] ? { type: "tool", name: "json_query", args: { path: parsed.args[0], pointer: parsed.args[1] ?? "" } } : { type: "notice", message: "Usage: /json <file> [pointer]" };
+        case "stats": return { type: "tool", name: "workspace_stats", args: { pattern: arg || "**/*" } };
         case "diff": return { type: "tool", name: "git_diff", args: { args: parsed.args } };
         case "changed": return { type: "tool", name: "git_status", args: { args: ["--short"] } };
         case "git": {
@@ -187,6 +191,7 @@ export function executeTuiCommand(input, context) {
                 return { type: "notice", message: "Usage: /git status|diff|log" };
             return { type: "tool", name: `git_${sub}`, args: { args: parsed.args.slice(1) } };
         }
+        case "show": return parsed.args[0] ? { type: "tool", name: "git_show", args: { args: parsed.args[1] ? [parsed.args[0], "--", parsed.args[1]] : [parsed.args[0]] } } : { type: "notice", message: "Usage: /show <revision> [path]" };
         case "test":
         case "build": {
             const project = detectProject(config.permissions.workspaceRoot);
@@ -212,6 +217,8 @@ export function executeTuiCommand(input, context) {
             return scripts.length ? { type: "tool-sequence", tools: scripts.map((script) => ({ name: "run_command", args: { command: process.platform === "win32" ? "npm.cmd" : "npm", args: ["run", script] } })) } : { type: "notice", message: "No typecheck, lint, test, or build npm scripts were detected." };
         }
         case "run": return parsed.args[0] ? { type: "tool", name: "run_command", args: { command: parsed.args[0], args: parsed.args.slice(1) } } : { type: "notice", message: "Usage: /run <program> [args...]" };
+        case "mkdir": return parsed.args[0] ? { type: "tool", name: "make_directory", args: { path: parsed.args[0] } } : { type: "notice", message: "Usage: /mkdir <directory>" };
+        case "copy": return parsed.args.length === 2 ? { type: "tool", name: "copy_file", args: { source: parsed.args[0], destination: parsed.args[1] } } : { type: "notice", message: "Usage: /copy <source> <destination>" };
         case "tools": return { type: "notice", message: createTools({ workspaceRoot: config.permissions.workspaceRoot }).map((tool) => `${tool.def.name} [${tool.risk}]`).join(" · ") };
         case "doctor": return { type: "runtime", operation: "status" };
         case "review": return { type: "prompt", prompt: `Review the current workspace changes${arg ? ` with focus on ${arg}` : ""}. Inspect the Git diff and report correctness, security, and test findings by severity.` };
@@ -234,6 +241,13 @@ export function executeTuiCommand(input, context) {
             config.ui.theme = config.ui.theme === "flame" ? "cool" : config.ui.theme === "cool" ? "contrast" : config.ui.theme === "contrast" ? "mono" : "flame";
             context.persist();
             return { type: "notice", message: `Theme set to ${config.ui.theme}.` };
+        }
+        case "mouse": {
+            if (arg !== "on" && arg !== "off")
+                return { type: "notice", message: `Mouse controls are ${config.ui.mouse ? "on" : "off"}. Usage: /mouse on|off` };
+            config.ui.mouse = arg === "on";
+            context.persist();
+            return { type: "notice", message: `Mouse controls ${arg}.` };
         }
         case "cost":
         case "status": return { type: "notice", message: "Current usage and limits are always visible in the bottom status line." };

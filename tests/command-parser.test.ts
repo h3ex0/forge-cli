@@ -17,7 +17,8 @@ describe("slash command parser", () => {
   it("exposes the expanded command families for help and completion", () => {
     expect(slashCommandNames()).toEqual(expect.arrayContaining([
       "model", "runtime", "workspace", "read", "search", "check", "run",
-      "explain", "security", "resume", "export", "usage", "doctor", "ui",
+      "explain", "security", "resume", "export", "usage", "inspect", "stats",
+      "json", "hash", "show", "mkdir", "copy", "mouse", "doctor", "ui",
     ]));
   });
 });

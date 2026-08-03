@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { exec, execFile } from "node:child_process";
+import { createHash } from "node:crypto";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import fg from "fast-glob";
 import { validatePublicUrl } from "../security/network.js";
@@ -30,6 +31,14 @@ function strings(args, key) {
         throw new Error(`Expected string array: ${key}`);
     return value;
 }
+function workspacePattern(args, key, fallback) {
+    const value = text(args, key, fallback);
+    const normalized = value.replace(/\\/g, "/");
+    if (path.isAbsolute(value) || normalized.split("/").includes("..")) {
+        throw new Error(`Glob pattern must stay inside the workspace: ${value}`);
+    }
+    return value;
+}
 function runFile(file, args, cwd, timeout = 60_000, signal) {
     return new Promise((resolve, reject) => {
         execFile(file, args, { cwd, timeout, signal, maxBuffer: 4 * 1024 * 1024, windowsHide: true }, (error, stdout, stderr) => {
@@ -45,10 +54,10 @@ function tool(def, risk, execute) {
         def,
         risk,
         destructive: risk !== "read",
-        async execute(args) {
+        async execute(args, signal) {
             if (!validate(args))
                 throw new Error(`Invalid tool arguments: ${ajv.errorsText(validate.errors)}`);
-            return execute(args);
+            return execute(args, signal);
         },
     };
 }
@@ -76,6 +85,49 @@ export function createTools(context) {
             const start = Math.max(1, numberArg(args, "startLine", 1));
             const end = Math.min(lines.length, numberArg(args, "endLine", lines.length));
             return clip(lines.slice(start - 1, end).map((line, index) => `${start + index}: ${line}`).join("\n"));
+        }),
+        tool({
+            name: "file_info",
+            description: "Inspect a workspace file's type, size, timestamps, and line count without reading its contents.",
+            parameters: { type: "object", properties: { path: { type: "string" } }, required: ["path"], additionalProperties: false },
+        }, "read", async (args) => {
+            const file = resolveWorkspacePath(root, text(args, "path"));
+            const stat = fs.statSync(file);
+            const relative = path.relative(root, file) || ".";
+            let lines;
+            if (stat.isFile() && stat.size <= 10 * 1024 * 1024) {
+                const content = fs.readFileSync(file, "utf-8");
+                lines = content.length ? content.split(/\r?\n/).length : 0;
+            }
+            return JSON.stringify({ path: relative, type: stat.isDirectory() ? "directory" : stat.isFile() ? "file" : "other", bytes: stat.size, lines, modifiedAt: stat.mtime.toISOString(), createdAt: stat.birthtime.toISOString() }, null, 2);
+        }),
+        tool({
+            name: "hash_file",
+            description: "Calculate a SHA-256 digest for a workspace file.",
+            parameters: { type: "object", properties: { path: { type: "string" } }, required: ["path"], additionalProperties: false },
+        }, "read", async (args) => {
+            const file = resolveWorkspacePath(root, text(args, "path"));
+            if (!fs.statSync(file).isFile())
+                throw new Error("Hash target must be a file.");
+            return `sha256  ${createHash("sha256").update(fs.readFileSync(file)).digest("hex")}  ${path.relative(root, file)}`;
+        }),
+        tool({
+            name: "json_query",
+            description: "Read a value from a workspace JSON file using an RFC 6901 JSON Pointer.",
+            parameters: { type: "object", properties: { path: { type: "string" }, pointer: { type: "string" } }, required: ["path"], additionalProperties: false },
+        }, "read", async (args) => {
+            const file = resolveWorkspacePath(root, text(args, "path"));
+            let value = JSON.parse(fs.readFileSync(file, "utf-8"));
+            const pointer = text(args, "pointer", "");
+            if (pointer && !pointer.startsWith("/"))
+                throw new Error("JSON Pointer must be empty or start with '/'.");
+            for (const segment of pointer.split("/").slice(1)) {
+                const key = segment.replace(/~1/g, "/").replace(/~0/g, "~");
+                if (value === null || typeof value !== "object" || !(key in value))
+                    throw new Error(`JSON Pointer segment not found: ${key}`);
+                value = value[key];
+            }
+            return clip(JSON.stringify(value, null, 2) ?? "undefined");
         }),
         tool({
             name: "write_file",
@@ -126,12 +178,30 @@ export function createTools(context) {
             name: "file_tree",
             description: "Return an ignore-aware workspace file tree.",
             parameters: { type: "object", properties: { pattern: { type: "string" } }, additionalProperties: false },
-        }, "read", async (args) => clip((await fg(text(args, "pattern", "**/*"), { cwd: root, dot: false, onlyFiles: false, ignore: [".git/**", "node_modules/**", "dist/**"] })).join("\n"))),
+        }, "read", async (args) => clip((await fg(workspacePattern(args, "pattern", "**/*"), { cwd: root, dot: false, onlyFiles: false, ignore: [".git/**", "node_modules/**", "dist/**"] })).join("\n"))),
+        tool({
+            name: "workspace_stats",
+            description: "Summarize workspace file counts, sizes, extensions, and largest files while respecting common ignores.",
+            parameters: { type: "object", properties: { pattern: { type: "string" } }, additionalProperties: false },
+        }, "read", async (args) => {
+            const files = await fg(workspacePattern(args, "pattern", "**/*"), { cwd: root, dot: false, onlyFiles: true, ignore: [".git/**", "node_modules/**", "dist/**"] });
+            const extensions = new Map();
+            const sizes = [];
+            let totalBytes = 0;
+            for (const relative of files.slice(0, 20_000)) {
+                const bytes = fs.statSync(resolveWorkspacePath(root, relative)).size;
+                totalBytes += bytes;
+                sizes.push({ path: relative, bytes });
+                const extension = path.extname(relative).toLowerCase() || "[none]";
+                extensions.set(extension, (extensions.get(extension) ?? 0) + 1);
+            }
+            return JSON.stringify({ files: files.length, scannedFiles: sizes.length, bytes: totalBytes, extensions: Object.fromEntries([...extensions].sort((a, b) => b[1] - a[1]).slice(0, 20)), largest: sizes.sort((a, b) => b.bytes - a.bytes).slice(0, 10) }, null, 2);
+        }),
         tool({
             name: "glob_search",
             description: "Find workspace paths matching a glob.",
             parameters: { type: "object", properties: { pattern: { type: "string" } }, required: ["pattern"], additionalProperties: false },
-        }, "read", async (args) => clip((await fg(text(args, "pattern"), { cwd: root, dot: false, onlyFiles: false, ignore: [".git/**", "node_modules/**"] })).join("\n") || "(no matches)")),
+        }, "read", async (args) => clip((await fg(workspacePattern(args, "pattern", "**/*"), { cwd: root, dot: false, onlyFiles: false, ignore: [".git/**", "node_modules/**"] })).join("\n") || "(no matches)")),
         tool({
             name: "grep_search",
             description: "Search workspace text files with a regular expression.",
@@ -143,7 +213,7 @@ export function createTools(context) {
             },
         }, "read", async (args) => {
             const regex = new RegExp(text(args, "pattern"));
-            const files = await fg(text(args, "glob", "**/*"), { cwd: root, onlyFiles: true, dot: false, ignore: [".git/**", "node_modules/**", "dist/**"] });
+            const files = await fg(workspacePattern(args, "glob", "**/*"), { cwd: root, onlyFiles: true, dot: false, ignore: [".git/**", "node_modules/**", "dist/**"] });
             const hits = [];
             for (const relative of files) {
                 let content;
@@ -174,6 +244,28 @@ export function createTools(context) {
             },
         }, "process", async (args, signal) => runFile(text(args, "command"), strings(args, "args"), resolveWorkspacePath(root, text(args, "cwd", ".")), numberArg(args, "timeoutMs", 60_000), signal)),
         tool({
+            name: "make_directory",
+            description: "Create a directory inside the workspace without deleting or overwriting content.",
+            parameters: { type: "object", properties: { path: { type: "string" } }, required: ["path"], additionalProperties: false },
+        }, "write", async (args) => {
+            const directory = resolveWorkspacePath(root, text(args, "path"), { allowMissing: true });
+            fs.mkdirSync(directory, { recursive: true });
+            return `Created ${path.relative(root, directory)}`;
+        }),
+        tool({
+            name: "copy_file",
+            description: "Copy one workspace file to a new workspace path without overwriting an existing target.",
+            parameters: { type: "object", properties: { source: { type: "string" }, destination: { type: "string" } }, required: ["source", "destination"], additionalProperties: false },
+        }, "write", async (args) => {
+            const source = resolveWorkspacePath(root, text(args, "source"));
+            const destination = resolveWorkspacePath(root, text(args, "destination"), { allowMissing: true });
+            if (!fs.statSync(source).isFile())
+                throw new Error("Copy source must be a file.");
+            fs.mkdirSync(path.dirname(destination), { recursive: true });
+            fs.copyFileSync(source, destination, fs.constants.COPYFILE_EXCL);
+            return `Copied ${path.relative(root, source)} to ${path.relative(root, destination)}`;
+        }),
+        tool({
             name: "bash_exec",
             description: "High-risk compatibility escape hatch: execute a shell command inside the workspace.",
             parameters: { type: "object", properties: { command: { type: "string" }, cwd: { type: "string" } }, required: ["command"], additionalProperties: false },
@@ -184,7 +276,7 @@ export function createTools(context) {
                 resolve(clip(`${stdout}${stderr ? `\n[stderr]\n${stderr}` : ""}`.trim() || "(no output)"));
             });
         })),
-        ...["status", "diff", "log"].map((subcommand) => tool({
+        ...["status", "diff", "log", "show"].map((subcommand) => tool({
             name: `git_${subcommand}`,
             description: `Run read-only git ${subcommand} in the workspace.`,
             parameters: { type: "object", properties: { args: { type: "array", items: { type: "string" } } }, additionalProperties: false },

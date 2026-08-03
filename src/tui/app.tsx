@@ -2,7 +2,7 @@ import React from "react";
 import path from "node:path";
 import fs from "node:fs";
 import fg from "fast-glob";
-import { Box, Text, useApp, useInput, useStdout } from "ink";
+import { Box, Text, measureElement, useApp, useInput, useStdout, type DOMElement } from "ink";
 import type { ForgeConfig, Profile } from "../config.js";
 import { saveConfig } from "../config.js";
 import type { ChatMessage } from "../providers/types.js";
@@ -22,9 +22,11 @@ import { SLASH_COMMANDS } from "../commands/registry.js";
 import { executeTuiCommand, tuiCommandSuggestions, type TuiOverlay } from "./commands.js";
 import { sanitizeTerminalText, summarizeToolArguments } from "./sanitize.js";
 import { getTheme } from "./theme.js";
+import { containsPoint, DISABLE_MOUSE_TRACKING, ENABLE_MOUSE_TRACKING, parseMouseInput } from "./mouse.js";
 
 interface SelectItem { id: string; label: string; detail?: string }
 interface ApprovalState { request: ApprovalRequest; resolve: (allowed: boolean) => void }
+type TuiFocus = "activity" | "conversation" | "context" | "composer";
 
 function systemMessages(config: ForgeConfig): ChatMessage[] {
   const instructions = loadProjectInstructions(config.permissions.workspaceRoot)
@@ -51,29 +53,30 @@ function MessageBlock({ message, theme }: { message: ChatMessage; theme: ReturnT
   </Box>;
 }
 
-function Overlay({ title, query, items, selected, theme, footer }: { title: string; query: string; items: SelectItem[]; selected: number; theme: ReturnType<typeof getTheme>; footer: string }): React.ReactElement {
-  return <Box position="absolute" width="82%" minHeight={8} alignSelf="center" marginTop={2} flexDirection="column" borderStyle="double" borderColor={theme.focusBorder} paddingX={2} paddingY={1}>
+function Overlay({ title, query, items, selected, theme, footer, boxRef, itemRefs }: { title: string; query: string; items: SelectItem[]; selected: number; theme: ReturnType<typeof getTheme>; footer: string; boxRef?: React.Ref<DOMElement>; itemRefs?: React.MutableRefObject<Map<number, DOMElement>> }): React.ReactElement {
+  const start = Math.max(0, selected - 6);
+  return <Box ref={boxRef} position="absolute" width="82%" minHeight={8} alignSelf="center" marginTop={2} flexDirection="column" borderStyle="double" borderColor={theme.focusBorder} paddingX={2} paddingY={1}>
     <Text bold color={theme.accent}>{title}</Text>
     <Text color={theme.text}>Search: {sanitizeTerminalText(query)}█</Text>
     <Text color={theme.muted}>{"─".repeat(54)}</Text>
-    {items.slice(Math.max(0, selected - 6), Math.max(0, selected - 6) + 13).map((item, index) => {
-      const absolute = Math.max(0, selected - 6) + index;
-      return <Text key={item.id} color={absolute === selected ? theme.accent : theme.text} inverse={absolute === selected}>
+    {items.slice(start, start + 13).map((item, index) => {
+      const absolute = start + index;
+      return <Box key={item.id} ref={(node) => { if (node) itemRefs?.current.set(absolute, node); else itemRefs?.current.delete(absolute); }}><Text color={absolute === selected ? theme.accent : theme.text} inverse={absolute === selected}>
         {absolute === selected ? " › " : "   "}{sanitizeTerminalText(item.label)}{item.detail ? `  ${sanitizeTerminalText(item.detail)}` : ""}
-      </Text>;
+      </Text></Box>;
     })}
     {!items.length && <Text color={theme.muted}>No items available.</Text>}
     <Text color={theme.muted}>{footer}</Text>
   </Box>;
 }
 
-function ApprovalModal({ state, theme }: { state: ApprovalState; theme: ReturnType<typeof getTheme> }): React.ReactElement {
+function ApprovalModal({ state, theme, boxRef, allowRef, denyRef }: { state: ApprovalState; theme: ReturnType<typeof getTheme>; boxRef?: React.Ref<DOMElement>; allowRef?: React.Ref<DOMElement>; denyRef?: React.Ref<DOMElement> }): React.ReactElement {
   const args = summarizeToolArguments(state.request.activity.args);
-  return <Box position="absolute" width="86%" alignSelf="center" marginTop={2} flexDirection="column" borderStyle="double" borderColor={theme.warning} paddingX={2} paddingY={1}>
+  return <Box ref={boxRef} position="absolute" width="86%" alignSelf="center" marginTop={2} flexDirection="column" borderStyle="double" borderColor={theme.warning} paddingX={2} paddingY={1}>
     <Text bold color={theme.warning}>APPROVAL REQUIRED · {state.request.activity.risk.toUpperCase()}</Text>
     <Text bold>{state.request.activity.name}</Text>
     <Text color={theme.muted} wrap="truncate-end">{args}</Text>
-    <Text color={theme.warning}>Y allow once · N/Esc deny · Enter denies safely</Text>
+    <Box gap={2}><Box ref={allowRef}><Text color={theme.success}>[ Allow once ]</Text></Box><Box ref={denyRef}><Text color={theme.danger}>[ Deny ]</Text></Box><Text color={theme.warning}>Y/N/Esc · Enter denies safely</Text></Box>
   </Box>;
 }
 
@@ -94,6 +97,8 @@ export function ForgeTui({ config }: { config: ForgeConfig }): React.ReactElemen
   const [overlayQuery, setOverlayQuery] = React.useState("");
   const [overlayItems, setOverlayItems] = React.useState<SelectItem[]>([]);
   const [selected, setSelected] = React.useState(0);
+  const [focus, setFocus] = React.useState<TuiFocus>("composer");
+  const [selectedActivity, setSelectedActivity] = React.useState(0);
   const [scrollOffset, setScrollOffset] = React.useState(0);
   const [queuedPrompt, setQueuedPrompt] = React.useState("");
   const [usage, setUsage] = React.useState<AgentUsage>({ promptTokens: 0, completionTokens: 0 });
@@ -108,7 +113,28 @@ export function ForgeTui({ config }: { config: ForgeConfig }): React.ReactElemen
   const operationAbortRef = React.useRef<AbortController | null>(null);
   const messagesRef = React.useRef<ChatMessage[]>(systemMessages(config));
   const sessionRef = React.useRef<AgentSession | null>(null);
+  const activityPaneRef = React.useRef<DOMElement>(null!);
+  const conversationPaneRef = React.useRef<DOMElement>(null!);
+  const contextPaneRef = React.useRef<DOMElement>(null!);
+  const composerRef = React.useRef<DOMElement>(null!);
+  const overlayRef = React.useRef<DOMElement>(null!);
+  const approvalBoxRef = React.useRef<DOMElement>(null!);
+  const approvalAllowRef = React.useRef<DOMElement>(null!);
+  const approvalDenyRef = React.useRef<DOMElement>(null!);
+  const overlayItemRefs = React.useRef(new Map<number, DOMElement>());
+  const activityItemRefs = React.useRef(new Map<number, DOMElement>());
+  const commandButtonRef = React.useRef<DOMElement>(null!);
+  const filesButtonRef = React.useRef<DOMElement>(null!);
+  const modelsButtonRef = React.useRef<DOMElement>(null!);
+  const sessionsButtonRef = React.useRef<DOMElement>(null!);
+  const helpButtonRef = React.useRef<DOMElement>(null!);
   const theme = getTheme(config.ui.theme);
+
+  React.useEffect(() => {
+    if (!config.ui.mouse || !stdout.isTTY) return;
+    stdout.write(ENABLE_MOUSE_TRACKING);
+    return () => { stdout.write(DISABLE_MOUSE_TRACKING); };
+  }, [config.ui.mouse, stdout]);
 
   const requestApproval = React.useCallback((request: ApprovalRequest): Promise<boolean> => new Promise((resolve) => {
     const value = { request, resolve };
@@ -215,8 +241,8 @@ export function ForgeTui({ config }: { config: ForgeConfig }): React.ReactElemen
     current.resolve(allowed);
   }, []);
 
-  const selectOverlayItem = React.useCallback(() => {
-    const item = filteredOverlayItems[selected];
+  const selectOverlayItem = React.useCallback((selection = selected) => {
+    const item = filteredOverlayItems[selection];
     if (!item || !overlay) return;
     if (overlay === "commands" || overlay === "help") {
       setInput(`/${item.id} `); setCursor(item.id.length + 2); setOverlay(null);
@@ -372,6 +398,52 @@ export function ForgeTui({ config }: { config: ForgeConfig }): React.ReactElemen
   }, [busy, config, exit, flushQueuedPrompt, input, requestApproval, session]);
 
   useInput((character, key) => {
+    const mouse = config.ui.mouse ? parseMouseInput(character) : undefined;
+    if (mouse) {
+      const metrics = (ref: React.RefObject<DOMElement>) => ref.current ? measureElement(ref.current) : undefined;
+      if (approval) {
+        if (mouse.action === "press" && mouse.button === "left") {
+          if (containsPoint(metrics(approvalAllowRef), mouse.x, mouse.y)) closeApproval(true);
+          else if (containsPoint(metrics(approvalDenyRef), mouse.x, mouse.y)) closeApproval(false);
+        }
+        return;
+      }
+      if (overlay) {
+        if (mouse.action === "wheel") {
+          setSelected((value) => Math.max(0, Math.min(filteredOverlayItems.length - 1, value + (mouse.button === "wheel-down" ? 1 : -1))));
+        } else if (mouse.action === "press" && mouse.button === "left") {
+          for (const [index, node] of overlayItemRefs.current) {
+            if (containsPoint(measureElement(node), mouse.x, mouse.y)) { setSelected(index); selectOverlayItem(index); return; }
+          }
+          if (!containsPoint(metrics(overlayRef), mouse.x, mouse.y)) setOverlay(null);
+        }
+        return;
+      }
+      if (mouse.action === "wheel") {
+        if (containsPoint(metrics(activityPaneRef), mouse.x, mouse.y)) {
+          setFocus("activity");
+          setSelectedActivity((value) => Math.max(0, Math.min(activities.length - 1, value + (mouse.button === "wheel-down" ? 1 : -1))));
+        } else {
+          setFocus("conversation");
+          setScrollOffset((value) => Math.max(0, value + (mouse.button === "wheel-up" ? 3 : -3)));
+        }
+        return;
+      }
+      if (mouse.action !== "press" || mouse.button !== "left") return;
+      if (containsPoint(metrics(commandButtonRef), mouse.x, mouse.y)) { setOverlay("commands"); return; }
+      if (containsPoint(metrics(filesButtonRef), mouse.x, mouse.y)) { setOverlay("context"); return; }
+      if (containsPoint(metrics(modelsButtonRef), mouse.x, mouse.y)) { setOverlay("models"); return; }
+      if (containsPoint(metrics(sessionsButtonRef), mouse.x, mouse.y)) { setOverlay("sessions"); return; }
+      if (containsPoint(metrics(helpButtonRef), mouse.x, mouse.y)) { setOverlay("help"); return; }
+      for (const [index, node] of activityItemRefs.current) {
+        if (containsPoint(measureElement(node), mouse.x, mouse.y)) { setFocus("activity"); setSelectedActivity(index); return; }
+      }
+      if (containsPoint(metrics(activityPaneRef), mouse.x, mouse.y)) { setFocus("activity"); return; }
+      if (containsPoint(metrics(contextPaneRef), mouse.x, mouse.y)) { setFocus("context"); setOverlay("context"); return; }
+      if (containsPoint(metrics(conversationPaneRef), mouse.x, mouse.y)) { setFocus("conversation"); return; }
+      if (containsPoint(metrics(composerRef), mouse.x, mouse.y)) { setFocus("composer"); return; }
+      return;
+    }
     if (approval) {
       if (character.toLowerCase() === "y") closeApproval(true);
       else if (character.toLowerCase() === "n" || key.escape || key.return) closeApproval(false);
@@ -383,6 +455,11 @@ export function ForgeTui({ config }: { config: ForgeConfig }): React.ReactElemen
     if (key.ctrl && character === "m") { setOverlay("models"); return; }
     if (key.ctrl && character === "p") { setOverlay("context"); return; }
     if (key.ctrl && character === "s") { setOverlay("sessions"); return; }
+    if (key.tab) {
+      const order: TuiFocus[] = wide ? ["activity", "conversation", "context", "composer"] : medium ? ["conversation", "context", "composer"] : ["conversation", "composer"];
+      setFocus((current) => order[(order.indexOf(current) + 1) % order.length]);
+      return;
+    }
     if (overlay) {
       if (key.upArrow) setSelected((value) => Math.max(0, value - 1));
       else if (key.downArrow) setSelected((value) => Math.max(0, Math.min(filteredOverlayItems.length - 1, value + 1)));
@@ -392,8 +469,25 @@ export function ForgeTui({ config }: { config: ForgeConfig }): React.ReactElemen
       return;
     }
     if (character === "?" && !input) { setOverlay("help"); return; }
+    if (focus === "activity") {
+      if (key.upArrow) { setSelectedActivity((value) => Math.max(0, value - 1)); return; }
+      if (key.downArrow) { setSelectedActivity((value) => Math.max(0, Math.min(activities.length - 1, value + 1))); return; }
+      if (key.return) {
+        const item = activities[selectedActivity];
+        if (item) setNotice(`${item.name}: ${item.result ? sanitizeTerminalText(item.result).slice(0, 300) : item.status}`);
+        return;
+      }
+    }
+    if (focus === "conversation" && (key.upArrow || key.downArrow)) {
+      setScrollOffset((value) => Math.max(0, value + (key.upArrow ? 1 : -1)));
+      return;
+    }
+    if (focus === "context" && key.return) { setOverlay("context"); return; }
     if (key.pageUp) { setScrollOffset((value) => value + 5); return; }
     if (key.pageDown) { setScrollOffset((value) => Math.max(0, value - 5)); return; }
+    if (focus !== "composer" && key.return) { setFocus("composer"); return; }
+    if (focus !== "composer" && (key.leftArrow || key.rightArrow || key.backspace || key.delete)) return;
+    if (focus !== "composer" && !key.ctrl && !key.meta && character) setFocus("composer");
     if (key.ctrl && character === "j") { setInput((value) => value.slice(0, cursor) + "\n" + value.slice(cursor)); setCursor((value) => value + 1); return; }
     if (key.return) { void submit(); return; }
     if (key.leftArrow) { setCursor((value) => Math.max(0, value - 1)); return; }
@@ -431,20 +525,20 @@ export function ForgeTui({ config }: { config: ForgeConfig }): React.ReactElemen
     </Box>
 
     <Box flexGrow={1}>
-      {wide && <Box width={25} flexDirection="column" borderStyle="single" borderColor={theme.border} paddingX={1}>
+      {wide && <Box ref={activityPaneRef} width={25} flexDirection="column" borderStyle="single" borderColor={focus === "activity" ? theme.focusBorder : theme.border} paddingX={1}>
         <Text bold color={theme.accent}>ACTIVITY</Text>
-        {activities.slice(0, Math.max(3, dimensions.rows - 10)).map((item) => <Text key={item.id} color={item.status === "failed" ? theme.danger : item.status === "completed" ? theme.success : theme.warning} wrap="truncate-end">
+        {activities.slice(0, Math.max(3, dimensions.rows - 10)).map((item, index) => <Box key={item.id} ref={(node) => { if (node) activityItemRefs.current.set(index, node); else activityItemRefs.current.delete(index); }}><Text inverse={focus === "activity" && index === selectedActivity} color={item.status === "failed" ? theme.danger : item.status === "completed" ? theme.success : theme.warning} wrap="truncate-end">
           {statusSymbol(item.status)} {sanitizeTerminalText(item.name)} {item.durationMs != null ? `${item.durationMs}ms` : ""}
-        </Text>)}
+        </Text></Box>)}
         {!activities.length && <Text color={theme.muted}>Tool calls appear here.</Text>}
       </Box>}
 
-      <Box flexGrow={1} flexDirection="column" borderStyle="single" borderColor={theme.focusBorder} paddingX={1}>
+      <Box ref={conversationPaneRef} flexGrow={1} flexDirection="column" borderStyle="single" borderColor={focus === "conversation" ? theme.focusBorder : theme.border} paddingX={1}>
         {visibleMessages.map((message, index) => <MessageBlock key={`${message.role}-${index}-${message.content.length}`} message={message} theme={theme} />)}
         {!visibleMessages.length && <Box flexGrow={1} alignItems="center" justifyContent="center"><Text color={theme.muted}>Ask about this workspace, press Ctrl+K for commands, or Ctrl+M for models.</Text></Box>}
       </Box>
 
-      {medium && <Box width={wide ? 29 : 25} flexDirection="column" borderStyle="single" borderColor={theme.border} paddingX={1}>
+      {medium && <Box ref={contextPaneRef} width={wide ? 29 : 25} flexDirection="column" borderStyle="single" borderColor={focus === "context" ? theme.focusBorder : theme.border} paddingX={1}>
         <Text bold color={theme.accent}>CONTEXT</Text>
         <Text wrap="truncate-end">Workspace: {sanitizeTerminalText(path.basename(config.permissions.workspaceRoot))}</Text>
         <Text>Instructions: {loadProjectInstructions(config.permissions.workspaceRoot).length}</Text>
@@ -456,7 +550,7 @@ export function ForgeTui({ config }: { config: ForgeConfig }): React.ReactElemen
       </Box>}
     </Box>
 
-    <Box borderStyle="round" borderColor={busy ? theme.warning : theme.focusBorder} paddingX={1} minHeight={3}>
+    <Box ref={composerRef} borderStyle="round" borderColor={busy ? theme.warning : focus === "composer" ? theme.focusBorder : theme.border} paddingX={1} minHeight={3}>
       <Text color={busy ? theme.warning : theme.text} wrap="wrap">{sanitizeTerminalText(busy ? `Working… type to queue · Esc cancel${input ? `\n› ${cursorView}` : ""}` : `› ${cursorView}`)}</Text>
     </Box>
     {suggestions.length > 0 && !overlay && <Text color={theme.muted}> {suggestions.join("  ")}</Text>}
@@ -464,9 +558,16 @@ export function ForgeTui({ config }: { config: ForgeConfig }): React.ReactElemen
       <Text color={limitExceeded ? theme.danger : theme.muted} bold={limitExceeded} wrap="truncate-end">{sanitizeTerminalText(usageLine)}</Text>
     </Box>
     {queuedPrompt && <Text color={theme.warning} wrap="truncate-end"> Queued: {sanitizeTerminalText(queuedPrompt)}</Text>}
-    <Text color={theme.muted}> Ctrl+K commands · Ctrl+P files · Ctrl+M models · Ctrl+S sessions · PgUp/PgDn scroll · Ctrl+J newline · ? help</Text>
+    <Box paddingX={1} gap={1}>
+      <Box ref={commandButtonRef}><Text color={theme.muted}>[Commands] ^K</Text></Box>
+      <Box ref={filesButtonRef}><Text color={theme.muted}>[Files] ^P</Text></Box>
+      <Box ref={modelsButtonRef}><Text color={theme.muted}>[Models] ^M</Text></Box>
+      <Box ref={sessionsButtonRef}><Text color={theme.muted}>[Sessions] ^S</Text></Box>
+      <Box ref={helpButtonRef}><Text color={theme.muted}>[Help] ?</Text></Box>
+      <Text color={theme.muted}> Tab panes · wheel scroll · {config.ui.mouse ? "mouse on" : "mouse off"}</Text>
+    </Box>
 
-    {overlay && <Overlay title={overlay.toUpperCase()} query={overlayQuery} items={filteredOverlayItems} selected={selected} theme={theme} footer="Type to filter · ↑/↓ select · Enter choose · Esc close" />}
-    {approval && <ApprovalModal state={approval} theme={theme} />}
+    {overlay && <Overlay boxRef={overlayRef} itemRefs={overlayItemRefs} title={overlay.toUpperCase()} query={overlayQuery} items={filteredOverlayItems} selected={selected} theme={theme} footer="Type/filter · click or ↑/↓ + Enter · wheel scroll · Esc close" />}
+    {approval && <ApprovalModal boxRef={approvalBoxRef} allowRef={approvalAllowRef} denyRef={approvalDenyRef} state={approval} theme={theme} />}
   </Box>;
 }

@@ -30,6 +30,7 @@ describe("Forge TUI rendering", () => {
 
     expect(output).toContain("FORGE");
     expect(output).toContain("tokens 0");
-    expect(output).toContain("Ctrl+K commands");
+    expect(output).toContain("[Commands]");
+    expect(output).toContain("mouse on");
   });
 });
