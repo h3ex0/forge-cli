@@ -1,6 +1,6 @@
 {
   "name": "forge-cli",
-  "version": "0.5.1",
+  "version": "0.5.2",
   "description": "A local-first AI coding agent for cloud APIs and open-source models through Ollama, LM Studio, and llama.cpp.",
   "type": "module",
   "bin": {

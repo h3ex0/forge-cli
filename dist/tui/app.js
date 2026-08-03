@@ -21,6 +21,7 @@ import { executeTuiCommand, tuiCommandSuggestions } from "./commands.js";
 import { sanitizeTerminalText, summarizeToolArguments } from "./sanitize.js";
 import { getTheme } from "./theme.js";
 import { containsPoint, DISABLE_MOUSE_TRACKING, ENABLE_MOUSE_TRACKING, parseMouseInput } from "./mouse.js";
+import { formatReaderStatus, wrapReaderText } from "./reader.js";
 function systemMessages(config) {
     const instructions = loadProjectInstructions(config.permissions.workspaceRoot)
         .map((item) => `\n\n[${item.file}]\n${item.content}`).join("");
@@ -73,6 +74,8 @@ export function ForgeTui({ config }) {
     const [selected, setSelected] = React.useState(0);
     const [focus, setFocus] = React.useState("composer");
     const [selectedActivity, setSelectedActivity] = React.useState(0);
+    const [reader, setReader] = React.useState(null);
+    const [readerOffset, setReaderOffset] = React.useState(0);
     const [scrollOffset, setScrollOffset] = React.useState(0);
     const [queuedPrompt, setQueuedPrompt] = React.useState("");
     const [usage, setUsage] = React.useState({ promptTokens: 0, completionTokens: 0 });
@@ -103,6 +106,8 @@ export function ForgeTui({ config }) {
     const sessionsButtonRef = React.useRef(null);
     const helpButtonRef = React.useRef(null);
     const mouseButtonRef = React.useRef(null);
+    const readerButtonRef = React.useRef(null);
+    const statusButtonRef = React.useRef(null);
     const theme = getTheme(config.ui.theme);
     React.useEffect(() => {
         if (!config.ui.mouse || !stdout.isTTY)
@@ -483,7 +488,70 @@ export function ForgeTui({ config }) {
         }
         await session.send(command.type === "prompt" ? command.prompt : value);
     }, [busy, config, exit, flushQueuedPrompt, input, requestApproval, session]);
+    const openReader = React.useCallback((pane = focus) => {
+        let title;
+        let content;
+        if (pane === "activity") {
+            title = "ACTIVITY";
+            const selectedItem = activities[selectedActivity];
+            content = selectedItem
+                ? `${selectedItem.name}\nstatus: ${selectedItem.status}\nrisk: ${selectedItem.risk}\nduration: ${selectedItem.durationMs ?? "pending"} ms\narguments: ${JSON.stringify(selectedItem.args, null, 2)}\n\n${selectedItem.result ?? "No result available."}`
+                : activities.map((item) => `${statusSymbol(item.status)} ${item.name} · ${item.status}${item.durationMs != null ? ` · ${item.durationMs} ms` : ""}`).join("\n") || "No tool activity yet.";
+        }
+        else if (pane === "context") {
+            title = "CONTEXT / SESSION";
+            const pinned = Array.from(contextFilesRef.current, ([file, value]) => `${file} (${value.length} chars)`).join("\n") || "No pinned files.";
+            content = `SESSION\n${busy ? "Working" : "Ready"}\n\nLATEST STATUS / ERROR\n${formatReaderStatus(notice)}\n\nWORKSPACE\n${config.permissions.workspaceRoot}\n\nPINNED FILES\n${pinned}`;
+        }
+        else if (pane === "composer") {
+            title = "COMPOSER";
+            content = input || "The composer is empty.";
+        }
+        else {
+            title = "CONVERSATION";
+            content = messagesRef.current.filter((message) => message.role !== "system").map((message) => `${message.role === "user" ? "YOU" : message.role === "assistant" ? "FORGE" : `TOOL ${message.name ?? "RESULT"}`}\n\n${message.content}`).join("\n\n---\n\n") || "No conversation messages yet.";
+            if (streamText)
+                content += `${content ? "\n\n---\n\n" : ""}FORGE (streaming)\n\n${streamText}`;
+        }
+        if (config.ui.mouse) {
+            config.ui.mouse = false;
+            saveConfig(config);
+        }
+        setReader({ title, content: sanitizeTerminalText(content) });
+        setReaderOffset(0);
+        setRevision((value) => value + 1);
+    }, [activities, busy, config, focus, input, notice, selectedActivity, streamText]);
     useInput((character, key) => {
+        if (reader) {
+            const readerLines = wrapReaderText(reader.content, dimensions.columns);
+            const page = Math.max(1, dimensions.rows - 3);
+            if (key.ctrl && character === "c") {
+                exit();
+                return;
+            }
+            if (key.escape || (key.ctrl && character === "y")) {
+                setReader(null);
+                setReaderOffset(0);
+                return;
+            }
+            if (key.pageUp || key.upArrow) {
+                setReaderOffset((value) => Math.max(0, value - (key.pageUp ? page : 1)));
+                return;
+            }
+            if (key.pageDown || key.downArrow) {
+                setReaderOffset((value) => Math.min(Math.max(0, readerLines.length - page), value + (key.pageDown ? page : 1)));
+                return;
+            }
+            if (key.home) {
+                setReaderOffset(0);
+                return;
+            }
+            if (key.end) {
+                setReaderOffset(Math.max(0, readerLines.length - page));
+                return;
+            }
+            return;
+        }
         const mouse = config.ui.mouse ? parseMouseInput(character) : undefined;
         if (mouse) {
             const metrics = (ref) => ref.current ? measureElement(ref.current) : undefined;
@@ -524,6 +592,17 @@ export function ForgeTui({ config }) {
                 }
                 return;
             }
+            if (mouse.action === "press" && mouse.button === "right") {
+                if (containsPoint(metrics(activityPaneRef), mouse.x, mouse.y))
+                    openReader("activity");
+                else if (containsPoint(metrics(contextPaneRef), mouse.x, mouse.y))
+                    openReader("context");
+                else if (containsPoint(metrics(conversationPaneRef), mouse.x, mouse.y))
+                    openReader("conversation");
+                else if (containsPoint(metrics(composerRef), mouse.x, mouse.y))
+                    openReader("composer");
+                return;
+            }
             if (mouse.action !== "press" || mouse.button !== "left")
                 return;
             if (containsPoint(metrics(commandButtonRef), mouse.x, mouse.y)) {
@@ -551,6 +630,14 @@ export function ForgeTui({ config }) {
                 saveConfig(config);
                 setNotice("Mouse capture off — drag to select text; Ctrl+T turns it back on.");
                 setRevision((value) => value + 1);
+                return;
+            }
+            if (containsPoint(metrics(readerButtonRef), mouse.x, mouse.y)) {
+                openReader();
+                return;
+            }
+            if (containsPoint(metrics(statusButtonRef), mouse.x, mouse.y)) {
+                openReader("context");
                 return;
             }
             for (const [index, node] of activityItemRefs.current) {
@@ -625,6 +712,14 @@ export function ForgeTui({ config }) {
             saveConfig(config);
             setNotice(config.ui.mouse ? "Mouse capture on — click controls; Shift+drag may select text in supported terminals." : "Mouse capture off — drag to select and copy text normally.");
             setRevision((value) => value + 1);
+            return;
+        }
+        if (key.ctrl && character === "y") {
+            openReader();
+            return;
+        }
+        if (key.ctrl && character === "e") {
+            openReader("context");
             return;
         }
         if (key.tab) {
@@ -736,9 +831,15 @@ export function ForgeTui({ config }) {
     const limitExceeded = (profile.subscription?.tokenLimit != null && subscriptionTokensUsed >= profile.subscription.tokenLimit)
         || (profile.subscription?.costLimitUsd != null && estimatedCostUsd != null && estimatedCostUsd >= profile.subscription.costLimitUsd);
     const cursorView = `${input.slice(0, cursor)}█${input.slice(cursor)}`;
+    const readerLines = reader ? wrapReaderText(reader.content, dimensions.columns) : [];
+    const readerPageSize = Math.max(1, dimensions.rows - 3);
     void revision;
+    if (reader) {
+        const visibleReaderLines = readerLines.slice(readerOffset, readerOffset + readerPageSize);
+        return _jsxs(Box, { flexDirection: "column", height: dimensions.rows, width: dimensions.columns, children: [_jsxs(Text, { bold: true, inverse: true, children: ["FORGE READER \u00B7 ", reader.title] }), _jsxs(Text, { color: theme.muted, children: ["Drag to select this pane only \u00B7 Ctrl+Y/Esc close \u00B7 \u2191/\u2193 or PgUp/PgDn scroll \u00B7 ", readerOffset + 1, "-", Math.min(readerLines.length, readerOffset + readerPageSize), "/", readerLines.length] }), _jsx(Text, { children: " " }), visibleReaderLines.map((line, index) => _jsx(Text, { wrap: "truncate-end", children: line || " " }, `${readerOffset}-${index}`))] });
+    }
     return _jsxs(Box, { flexDirection: "column", height: dimensions.rows, width: dimensions.columns, children: [_jsxs(Box, { borderStyle: "round", borderColor: theme.focusBorder, paddingX: 1, justifyContent: "space-between", children: [_jsx(Text, { bold: true, color: theme.accent, children: "\u25C6 FORGE" }), _jsxs(Text, { wrap: "truncate-end", children: [sanitizeTerminalText(path.basename(config.permissions.workspaceRoot)), " \u00B7 ", sanitizeTerminalText(config.activeProfile), "/", sanitizeTerminalText(profile.model), " \u00B7 ", profile.kind === "local" ? "● local" : "◉ cloud", " \u00B7 ", config.permissions.mode, config.routing.offline ? " · offline" : ""] })] }), _jsxs(Box, { flexGrow: 1, children: [wide && _jsxs(Box, { ref: activityPaneRef, width: 25, flexDirection: "column", borderStyle: "single", borderColor: focus === "activity" ? theme.focusBorder : theme.border, paddingX: 1, children: [_jsx(Text, { bold: true, color: theme.accent, children: "ACTIVITY" }), activities.slice(0, Math.max(3, dimensions.rows - 10)).map((item, index) => _jsx(Box, { ref: (node) => { if (node)
                                     activityItemRefs.current.set(index, node);
                                 else
-                                    activityItemRefs.current.delete(index); }, children: _jsxs(Text, { inverse: focus === "activity" && index === selectedActivity, color: item.status === "failed" ? theme.danger : item.status === "completed" ? theme.success : theme.warning, wrap: "truncate-end", children: [statusSymbol(item.status), " ", sanitizeTerminalText(item.name), " ", item.durationMs != null ? `${item.durationMs}ms` : ""] }) }, item.id)), !activities.length && _jsx(Text, { color: theme.muted, children: "Tool calls appear here." })] }), _jsxs(Box, { ref: conversationPaneRef, flexGrow: 1, flexDirection: "column", borderStyle: "single", borderColor: focus === "conversation" ? theme.focusBorder : theme.border, paddingX: 1, children: [visibleMessages.map((message, index) => _jsx(MessageBlock, { message: message, theme: theme }, `${message.role}-${index}-${message.content.length}`)), !visibleMessages.length && _jsx(Box, { flexGrow: 1, alignItems: "center", justifyContent: "center", children: _jsx(Text, { color: theme.muted, children: "Ask about this workspace, press Ctrl+K for commands, or Ctrl+M for models." }) })] }), medium && _jsxs(Box, { ref: contextPaneRef, width: wide ? 29 : 25, flexDirection: "column", borderStyle: "single", borderColor: focus === "context" ? theme.focusBorder : theme.border, paddingX: 1, children: [_jsx(Text, { bold: true, color: theme.accent, children: "CONTEXT" }), _jsxs(Text, { wrap: "truncate-end", children: ["Workspace: ", sanitizeTerminalText(path.basename(config.permissions.workspaceRoot))] }), _jsxs(Text, { children: ["Instructions: ", loadProjectInstructions(config.permissions.workspaceRoot).length] }), _jsxs(Text, { children: ["Pinned files: ", contextFilesRef.current.size] }), _jsxs(Text, { children: ["Messages: ", allMessages.length] }), _jsxs(Text, { children: ["Context: ~", estimateMessageTokens(messagesRef.current).toLocaleString("en-US"), " tokens"] }), _jsx(Text, { color: theme.muted, children: "Ctrl+P add files" }), _jsxs(Box, { marginTop: 1, flexDirection: "column", children: [_jsx(Text, { bold: true, color: theme.accent, children: "SESSION" }), _jsx(Text, { children: busy ? "● Working" : "○ Ready" }), _jsx(Text, { wrap: "wrap", color: theme.muted, children: sanitizeTerminalText(notice) })] })] })] }), _jsx(Box, { ref: composerRef, borderStyle: "round", borderColor: busy ? theme.warning : focus === "composer" ? theme.focusBorder : theme.border, paddingX: 1, minHeight: 3, children: _jsx(Text, { color: busy ? theme.warning : theme.text, wrap: "wrap", children: sanitizeTerminalText(busy ? `Working… type to queue · Esc cancel${input ? `\n› ${cursorView}` : ""}` : `› ${cursorView}`) }) }), suggestions.length > 0 && !overlay && _jsxs(Text, { color: theme.muted, children: [" ", suggestions.join("  ")] }), _jsx(Box, { paddingX: 1, justifyContent: "space-between", children: _jsx(Text, { color: limitExceeded ? theme.danger : theme.muted, bold: limitExceeded, wrap: "truncate-end", children: sanitizeTerminalText(usageLine) }) }), queuedPrompt && _jsxs(Text, { color: theme.warning, wrap: "truncate-end", children: [" Queued: ", sanitizeTerminalText(queuedPrompt)] }), _jsxs(Box, { paddingX: 1, gap: 1, children: [_jsx(Box, { ref: commandButtonRef, children: _jsx(Text, { color: theme.muted, children: "[Commands] ^K" }) }), _jsx(Box, { ref: filesButtonRef, children: _jsx(Text, { color: theme.muted, children: "[Files] ^P" }) }), _jsx(Box, { ref: modelsButtonRef, children: _jsx(Text, { color: theme.muted, children: "[Models] ^M" }) }), _jsx(Box, { ref: sessionsButtonRef, children: _jsx(Text, { color: theme.muted, children: "[Sessions] ^S" }) }), _jsx(Box, { ref: helpButtonRef, children: _jsx(Text, { color: theme.muted, children: "[Help] ?" }) }), _jsx(Box, { ref: mouseButtonRef, children: _jsxs(Text, { color: config.ui.mouse ? theme.warning : theme.muted, children: ["[Mouse ", config.ui.mouse ? "on" : "off", "] ^T"] }) }), _jsxs(Text, { color: theme.muted, children: [" Tab panes \u00B7 ", config.ui.mouse ? "Shift+drag select" : "drag selects text"] })] }), overlay && _jsx(Overlay, { boxRef: overlayRef, itemRefs: overlayItemRefs, title: overlay.toUpperCase(), query: overlayQuery, items: filteredOverlayItems, selected: selected, theme: theme, footer: "Type/filter \u00B7 click or \u2191/\u2193 + Enter \u00B7 wheel scroll \u00B7 Esc close" }), approval && _jsx(ApprovalModal, { boxRef: approvalBoxRef, allowRef: approvalAllowRef, denyRef: approvalDenyRef, state: approval, theme: theme })] });
+                                    activityItemRefs.current.delete(index); }, children: _jsxs(Text, { inverse: focus === "activity" && index === selectedActivity, color: item.status === "failed" ? theme.danger : item.status === "completed" ? theme.success : theme.warning, wrap: "truncate-end", children: [statusSymbol(item.status), " ", sanitizeTerminalText(item.name), " ", item.durationMs != null ? `${item.durationMs}ms` : ""] }) }, item.id)), !activities.length && _jsx(Text, { color: theme.muted, children: "Tool calls appear here." })] }), _jsxs(Box, { ref: conversationPaneRef, flexGrow: 1, flexDirection: "column", borderStyle: "single", borderColor: focus === "conversation" ? theme.focusBorder : theme.border, paddingX: 1, children: [visibleMessages.map((message, index) => _jsx(MessageBlock, { message: message, theme: theme }, `${message.role}-${index}-${message.content.length}`)), !visibleMessages.length && _jsx(Box, { flexGrow: 1, alignItems: "center", justifyContent: "center", children: _jsx(Text, { color: theme.muted, children: "Ask about this workspace, press Ctrl+K for commands, or Ctrl+M for models." }) })] }), medium && _jsxs(Box, { ref: contextPaneRef, width: wide ? 29 : 25, flexDirection: "column", borderStyle: "single", borderColor: focus === "context" ? theme.focusBorder : theme.border, paddingX: 1, children: [_jsx(Text, { bold: true, color: theme.accent, children: "CONTEXT" }), _jsxs(Text, { wrap: "truncate-end", children: ["Workspace: ", sanitizeTerminalText(path.basename(config.permissions.workspaceRoot))] }), _jsxs(Text, { children: ["Instructions: ", loadProjectInstructions(config.permissions.workspaceRoot).length] }), _jsxs(Text, { children: ["Pinned files: ", contextFilesRef.current.size] }), _jsxs(Text, { children: ["Messages: ", allMessages.length] }), _jsxs(Text, { children: ["Context: ~", estimateMessageTokens(messagesRef.current).toLocaleString("en-US"), " tokens"] }), _jsx(Text, { color: theme.muted, children: "Ctrl+P add files" }), _jsxs(Box, { marginTop: 1, flexDirection: "column", children: [_jsx(Text, { bold: true, color: theme.accent, children: "SESSION" }), _jsx(Text, { children: busy ? "● Working" : "○ Ready" }), _jsx(Text, { wrap: "wrap", color: theme.muted, children: sanitizeTerminalText(notice) })] })] })] }), _jsx(Box, { ref: composerRef, borderStyle: "round", borderColor: busy ? theme.warning : focus === "composer" ? theme.focusBorder : theme.border, paddingX: 1, minHeight: 3, children: _jsx(Text, { color: busy ? theme.warning : theme.text, wrap: "wrap", children: sanitizeTerminalText(busy ? `Working… type to queue · Esc cancel${input ? `\n› ${cursorView}` : ""}` : `› ${cursorView}`) }) }), suggestions.length > 0 && !overlay && _jsxs(Text, { color: theme.muted, children: [" ", suggestions.join("  ")] }), _jsx(Box, { paddingX: 1, justifyContent: "space-between", children: _jsx(Text, { color: limitExceeded ? theme.danger : theme.muted, bold: limitExceeded, wrap: "truncate-end", children: sanitizeTerminalText(usageLine) }) }), queuedPrompt && _jsxs(Text, { color: theme.warning, wrap: "truncate-end", children: [" Queued: ", sanitizeTerminalText(queuedPrompt)] }), _jsxs(Box, { paddingX: 1, gap: 1, children: [_jsx(Box, { ref: commandButtonRef, children: _jsx(Text, { color: theme.muted, children: "[Cmd ^K]" }) }), _jsx(Box, { ref: filesButtonRef, children: _jsx(Text, { color: theme.muted, children: "[Files ^P]" }) }), _jsx(Box, { ref: modelsButtonRef, children: _jsx(Text, { color: theme.muted, children: "[Models ^M]" }) }), _jsx(Box, { ref: sessionsButtonRef, children: _jsx(Text, { color: theme.muted, children: "[Sessions ^S]" }) }), _jsx(Box, { ref: helpButtonRef, children: _jsx(Text, { color: theme.muted, children: "[Help ?]" }) }), _jsx(Box, { ref: readerButtonRef, children: _jsx(Text, { color: theme.muted, children: "[Reader ^Y]" }) }), _jsx(Box, { ref: statusButtonRef, children: _jsx(Text, { color: notice.startsWith("Error:") ? theme.danger : theme.muted, children: "[Status ^E]" }) }), _jsx(Box, { ref: mouseButtonRef, children: _jsxs(Text, { color: config.ui.mouse ? theme.warning : theme.muted, children: ["[Mouse ", config.ui.mouse ? "on" : "off", " ^T]"] }) }), _jsx(Text, { color: theme.muted, children: " Tab panes" })] }), overlay && _jsx(Overlay, { boxRef: overlayRef, itemRefs: overlayItemRefs, title: overlay.toUpperCase(), query: overlayQuery, items: filteredOverlayItems, selected: selected, theme: theme, footer: "Type/filter \u00B7 click or \u2191/\u2193 + Enter \u00B7 wheel scroll \u00B7 Esc close" }), approval && _jsx(ApprovalModal, { boxRef: approvalBoxRef, allowRef: approvalAllowRef, denyRef: approvalDenyRef, state: approval, theme: theme })] });
 }

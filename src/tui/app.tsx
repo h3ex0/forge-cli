@@ -23,10 +23,12 @@ import { executeTuiCommand, tuiCommandSuggestions, type TuiOverlay } from "./com
 import { sanitizeTerminalText, summarizeToolArguments } from "./sanitize.js";
 import { getTheme } from "./theme.js";
 import { containsPoint, DISABLE_MOUSE_TRACKING, ENABLE_MOUSE_TRACKING, parseMouseInput } from "./mouse.js";
+import { formatReaderStatus, wrapReaderText } from "./reader.js";
 
 interface SelectItem { id: string; label: string; detail?: string }
 interface ApprovalState { request: ApprovalRequest; resolve: (allowed: boolean) => void }
 type TuiFocus = "activity" | "conversation" | "context" | "composer";
+interface ReaderState { title: string; content: string }
 
 function systemMessages(config: ForgeConfig): ChatMessage[] {
   const instructions = loadProjectInstructions(config.permissions.workspaceRoot)
@@ -99,6 +101,8 @@ export function ForgeTui({ config }: { config: ForgeConfig }): React.ReactElemen
   const [selected, setSelected] = React.useState(0);
   const [focus, setFocus] = React.useState<TuiFocus>("composer");
   const [selectedActivity, setSelectedActivity] = React.useState(0);
+  const [reader, setReader] = React.useState<ReaderState | null>(null);
+  const [readerOffset, setReaderOffset] = React.useState(0);
   const [scrollOffset, setScrollOffset] = React.useState(0);
   const [queuedPrompt, setQueuedPrompt] = React.useState("");
   const [usage, setUsage] = React.useState<AgentUsage>({ promptTokens: 0, completionTokens: 0 });
@@ -129,6 +133,8 @@ export function ForgeTui({ config }: { config: ForgeConfig }): React.ReactElemen
   const sessionsButtonRef = React.useRef<DOMElement>(null!);
   const helpButtonRef = React.useRef<DOMElement>(null!);
   const mouseButtonRef = React.useRef<DOMElement>(null!);
+  const readerButtonRef = React.useRef<DOMElement>(null!);
+  const statusButtonRef = React.useRef<DOMElement>(null!);
   const theme = getTheme(config.ui.theme);
 
   React.useEffect(() => {
@@ -398,7 +404,45 @@ export function ForgeTui({ config }: { config: ForgeConfig }): React.ReactElemen
     await session.send(command.type === "prompt" ? command.prompt : value);
   }, [busy, config, exit, flushQueuedPrompt, input, requestApproval, session]);
 
+  const openReader = React.useCallback((pane: TuiFocus = focus) => {
+    let title: string;
+    let content: string;
+    if (pane === "activity") {
+      title = "ACTIVITY";
+      const selectedItem = activities[selectedActivity];
+      content = selectedItem
+        ? `${selectedItem.name}\nstatus: ${selectedItem.status}\nrisk: ${selectedItem.risk}\nduration: ${selectedItem.durationMs ?? "pending"} ms\narguments: ${JSON.stringify(selectedItem.args, null, 2)}\n\n${selectedItem.result ?? "No result available."}`
+        : activities.map((item) => `${statusSymbol(item.status)} ${item.name} · ${item.status}${item.durationMs != null ? ` · ${item.durationMs} ms` : ""}`).join("\n") || "No tool activity yet.";
+    } else if (pane === "context") {
+      title = "CONTEXT / SESSION";
+      const pinned = Array.from(contextFilesRef.current, ([file, value]) => `${file} (${value.length} chars)`).join("\n") || "No pinned files.";
+      content = `SESSION\n${busy ? "Working" : "Ready"}\n\nLATEST STATUS / ERROR\n${formatReaderStatus(notice)}\n\nWORKSPACE\n${config.permissions.workspaceRoot}\n\nPINNED FILES\n${pinned}`;
+    } else if (pane === "composer") {
+      title = "COMPOSER";
+      content = input || "The composer is empty.";
+    } else {
+      title = "CONVERSATION";
+      content = messagesRef.current.filter((message) => message.role !== "system").map((message) => `${message.role === "user" ? "YOU" : message.role === "assistant" ? "FORGE" : `TOOL ${message.name ?? "RESULT"}`}\n\n${message.content}`).join("\n\n---\n\n") || "No conversation messages yet.";
+      if (streamText) content += `${content ? "\n\n---\n\n" : ""}FORGE (streaming)\n\n${streamText}`;
+    }
+    if (config.ui.mouse) { config.ui.mouse = false; saveConfig(config); }
+    setReader({ title, content: sanitizeTerminalText(content) });
+    setReaderOffset(0);
+    setRevision((value) => value + 1);
+  }, [activities, busy, config, focus, input, notice, selectedActivity, streamText]);
+
   useInput((character, key) => {
+    if (reader) {
+      const readerLines = wrapReaderText(reader.content, dimensions.columns);
+      const page = Math.max(1, dimensions.rows - 3);
+      if (key.ctrl && character === "c") { exit(); return; }
+      if (key.escape || (key.ctrl && character === "y")) { setReader(null); setReaderOffset(0); return; }
+      if (key.pageUp || key.upArrow) { setReaderOffset((value) => Math.max(0, value - (key.pageUp ? page : 1))); return; }
+      if (key.pageDown || key.downArrow) { setReaderOffset((value) => Math.min(Math.max(0, readerLines.length - page), value + (key.pageDown ? page : 1))); return; }
+      if (key.home) { setReaderOffset(0); return; }
+      if (key.end) { setReaderOffset(Math.max(0, readerLines.length - page)); return; }
+      return;
+    }
     const mouse = config.ui.mouse ? parseMouseInput(character) : undefined;
     if (mouse) {
       const metrics = (ref: React.RefObject<DOMElement>) => ref.current ? measureElement(ref.current) : undefined;
@@ -430,6 +474,13 @@ export function ForgeTui({ config }: { config: ForgeConfig }): React.ReactElemen
         }
         return;
       }
+      if (mouse.action === "press" && mouse.button === "right") {
+        if (containsPoint(metrics(activityPaneRef), mouse.x, mouse.y)) openReader("activity");
+        else if (containsPoint(metrics(contextPaneRef), mouse.x, mouse.y)) openReader("context");
+        else if (containsPoint(metrics(conversationPaneRef), mouse.x, mouse.y)) openReader("conversation");
+        else if (containsPoint(metrics(composerRef), mouse.x, mouse.y)) openReader("composer");
+        return;
+      }
       if (mouse.action !== "press" || mouse.button !== "left") return;
       if (containsPoint(metrics(commandButtonRef), mouse.x, mouse.y)) { setOverlay("commands"); return; }
       if (containsPoint(metrics(filesButtonRef), mouse.x, mouse.y)) { setOverlay("context"); return; }
@@ -439,6 +490,8 @@ export function ForgeTui({ config }: { config: ForgeConfig }): React.ReactElemen
       if (containsPoint(metrics(mouseButtonRef), mouse.x, mouse.y)) {
         config.ui.mouse = false; saveConfig(config); setNotice("Mouse capture off — drag to select text; Ctrl+T turns it back on."); setRevision((value) => value + 1); return;
       }
+      if (containsPoint(metrics(readerButtonRef), mouse.x, mouse.y)) { openReader(); return; }
+      if (containsPoint(metrics(statusButtonRef), mouse.x, mouse.y)) { openReader("context"); return; }
       for (const [index, node] of activityItemRefs.current) {
         if (containsPoint(measureElement(node), mouse.x, mouse.y)) { setFocus("activity"); setSelectedActivity(index); return; }
       }
@@ -466,6 +519,8 @@ export function ForgeTui({ config }: { config: ForgeConfig }): React.ReactElemen
       setRevision((value) => value + 1);
       return;
     }
+    if (key.ctrl && character === "y") { openReader(); return; }
+    if (key.ctrl && character === "e") { openReader("context"); return; }
     if (key.tab) {
       const order: TuiFocus[] = wide ? ["activity", "conversation", "context", "composer"] : medium ? ["conversation", "context", "composer"] : ["conversation", "composer"];
       setFocus((current) => order[(order.indexOf(current) + 1) % order.length]);
@@ -527,7 +582,19 @@ export function ForgeTui({ config }: { config: ForgeConfig }): React.ReactElemen
   const limitExceeded = (profile.subscription?.tokenLimit != null && subscriptionTokensUsed >= profile.subscription.tokenLimit)
     || (profile.subscription?.costLimitUsd != null && estimatedCostUsd != null && estimatedCostUsd >= profile.subscription.costLimitUsd);
   const cursorView = `${input.slice(0, cursor)}█${input.slice(cursor)}`;
+  const readerLines = reader ? wrapReaderText(reader.content, dimensions.columns) : [];
+  const readerPageSize = Math.max(1, dimensions.rows - 3);
   void revision;
+
+  if (reader) {
+    const visibleReaderLines = readerLines.slice(readerOffset, readerOffset + readerPageSize);
+    return <Box flexDirection="column" height={dimensions.rows} width={dimensions.columns}>
+      <Text bold inverse>FORGE READER · {reader.title}</Text>
+      <Text color={theme.muted}>Drag to select this pane only · Ctrl+Y/Esc close · ↑/↓ or PgUp/PgDn scroll · {readerOffset + 1}-{Math.min(readerLines.length, readerOffset + readerPageSize)}/{readerLines.length}</Text>
+      <Text> </Text>
+      {visibleReaderLines.map((line, index) => <Text key={`${readerOffset}-${index}`} wrap="truncate-end">{line || " "}</Text>)}
+    </Box>;
+  }
 
   return <Box flexDirection="column" height={dimensions.rows} width={dimensions.columns}>
     <Box borderStyle="round" borderColor={theme.focusBorder} paddingX={1} justifyContent="space-between">
@@ -570,13 +637,15 @@ export function ForgeTui({ config }: { config: ForgeConfig }): React.ReactElemen
     </Box>
     {queuedPrompt && <Text color={theme.warning} wrap="truncate-end"> Queued: {sanitizeTerminalText(queuedPrompt)}</Text>}
     <Box paddingX={1} gap={1}>
-      <Box ref={commandButtonRef}><Text color={theme.muted}>[Commands] ^K</Text></Box>
-      <Box ref={filesButtonRef}><Text color={theme.muted}>[Files] ^P</Text></Box>
-      <Box ref={modelsButtonRef}><Text color={theme.muted}>[Models] ^M</Text></Box>
-      <Box ref={sessionsButtonRef}><Text color={theme.muted}>[Sessions] ^S</Text></Box>
-      <Box ref={helpButtonRef}><Text color={theme.muted}>[Help] ?</Text></Box>
-      <Box ref={mouseButtonRef}><Text color={config.ui.mouse ? theme.warning : theme.muted}>[Mouse {config.ui.mouse ? "on" : "off"}] ^T</Text></Box>
-      <Text color={theme.muted}> Tab panes · {config.ui.mouse ? "Shift+drag select" : "drag selects text"}</Text>
+      <Box ref={commandButtonRef}><Text color={theme.muted}>[Cmd ^K]</Text></Box>
+      <Box ref={filesButtonRef}><Text color={theme.muted}>[Files ^P]</Text></Box>
+      <Box ref={modelsButtonRef}><Text color={theme.muted}>[Models ^M]</Text></Box>
+      <Box ref={sessionsButtonRef}><Text color={theme.muted}>[Sessions ^S]</Text></Box>
+      <Box ref={helpButtonRef}><Text color={theme.muted}>[Help ?]</Text></Box>
+      <Box ref={readerButtonRef}><Text color={theme.muted}>[Reader ^Y]</Text></Box>
+      <Box ref={statusButtonRef}><Text color={notice.startsWith("Error:") ? theme.danger : theme.muted}>[Status ^E]</Text></Box>
+      <Box ref={mouseButtonRef}><Text color={config.ui.mouse ? theme.warning : theme.muted}>[Mouse {config.ui.mouse ? "on" : "off"} ^T]</Text></Box>
+      <Text color={theme.muted}> Tab panes</Text>
     </Box>
 
     {overlay && <Overlay boxRef={overlayRef} itemRefs={overlayItemRefs} title={overlay.toUpperCase()} query={overlayQuery} items={filteredOverlayItems} selected={selected} theme={theme} footer="Type/filter · click or ↑/↓ + Enter · wheel scroll · Esc close" />}

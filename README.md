@@ -9,7 +9,7 @@ Forge is a local-first AI coding CLI with a TUI-first workspace, streaming chat,
 ![Node.js](https://img.shields.io/badge/Node.js-%3E%3D22-339933?logo=node.js&logoColor=white)
 ![TypeScript](https://img.shields.io/badge/TypeScript-5.x-3178C6?logo=typescript&logoColor=white)
 ![Local models](https://img.shields.io/badge/local-Ollama%20%7C%20LM%20Studio%20%7C%20llama.cpp-7C3AED)
-![Version](https://img.shields.io/badge/version-0.5.1-orange)
+![Version](https://img.shields.io/badge/version-0.5.2-orange)
 
 </div>
 
@@ -115,6 +115,8 @@ The TUI and inline REPL share the same agent engine, tool loop, permission decis
 | `Ctrl+M` | Switch cloud profiles or local models |
 | `Ctrl+S` | Browse saved and automatic sessions |
 | `Ctrl+T` | Toggle mouse capture on or off |
+| `Ctrl+Y` | Open the focused pane in the borderless reader |
+| `Ctrl+E` | Open full session status or the latest error in the reader |
 | `Tab` | Move focus between visible panes |
 | `Page Up` / `Page Down` | Scroll conversation history |
 | `Ctrl+J` | Insert a newline in the composer |
@@ -123,6 +125,8 @@ The TUI and inline REPL share the same agent engine, tool loop, permission decis
 | `?` | Open help from an empty composer |
 
 Native text selection is the default: drag normally to select and copy terminal text. Press `Ctrl+T` or run `/mouse on` when you want clickable panes, footer actions, overlay rows, wheel scrolling, and approval buttons. Click `[Mouse on]` or press `Ctrl+T` again to return to selection mode. Many terminals also support `Shift+drag` for selection while mouse capture is active.
+
+Because terminals select screen rows rather than UI components, selecting directly across the three-column workspace can include neighboring borders. Focus a pane with `Tab` and press `Ctrl+Y`, or enable mouse mode and click `[Reader]`/right-click a pane. `Ctrl+E` opens the complete session status or latest error directly. Forge replaces the columns with a borderless, full-width view containing only that pane's untruncated text. Mouse capture switches off automatically so you can drag-select cleanly; `Esc` returns to the workspace.
 
 Commands, model names, files, and sessions are searchable inside their overlays. Prompts typed while Forge is working are queued for the next turn. The TUI autosaves conversations as `autosave` and records `recovery-latest` before approved write/process operations.
 

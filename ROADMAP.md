@@ -47,6 +47,7 @@ Forge is evolving into a local-first, provider-independent terminal agent that c
 - Workspace metadata, SHA-256, JSON Pointer, workspace-statistics, and Git-show inspection tools.
 - Workspace-bounded directory creation and no-overwrite file copying behind write approvals.
 - Config schema v5 migration, instant `Ctrl+T`/footer mouse toggling, and shared inline/TUI slash commands for every new tool.
+- Borderless focused-pane reader for clean terminal selection and untruncated conversation, activity, composer, and session/error text.
 
 ## v0.6 — Reliability and recovery
 
