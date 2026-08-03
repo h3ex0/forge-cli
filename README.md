@@ -229,4 +229,3 @@ Please do not publish suspected vulnerabilities in a public issue; follow [SECUR
 Built for developers who want model choice, local control, and a terminal-native AI workflow.
 
 </div>
-

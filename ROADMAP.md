@@ -213,4 +213,3 @@ The proposed capability-policy decision is recorded in [ADR-0001](docs/adr/0001-
 - Reproducible, signed releases
 - Documented compatibility and migration policy
 - No open critical or high-severity security findings
-

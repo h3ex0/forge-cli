@@ -73,4 +73,3 @@ Strong isolation is valuable and may be added as defense in depth, but availabil
 5. Record a redacted decision and outcome in the audit log.
 6. Add Windows, macOS, and Linux tests for boundary escapes.
 7. Route all built-in and external tools through the same enforcement point.
-

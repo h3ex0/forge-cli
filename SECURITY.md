@@ -68,4 +68,3 @@ Changes involving tool execution, filesystem paths, network requests, secrets, c
 - Cross-platform path/process behavior where relevant
 - Confirmation that logs and errors do not expose secrets
 - Backward-compatibility or migration details
-
