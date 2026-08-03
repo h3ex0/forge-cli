@@ -16,7 +16,7 @@ export interface ToolSpec {
   def: ToolDef;
   risk: ToolRisk;
   destructive: boolean;
-  execute: (args: Record<string, unknown>) => Promise<string>;
+  execute: (args: Record<string, unknown>, signal?: AbortSignal) => Promise<string>;
 }
 
 const MAX_OUTPUT = 24_000;
@@ -45,9 +45,9 @@ function strings(args: Record<string, unknown>, key: string): string[] {
   return value;
 }
 
-function runFile(file: string, args: string[], cwd: string, timeout = 60_000): Promise<string> {
+function runFile(file: string, args: string[], cwd: string, timeout = 60_000, signal?: AbortSignal): Promise<string> {
   return new Promise((resolve, reject) => {
-    execFile(file, args, { cwd, timeout, maxBuffer: 4 * 1024 * 1024, windowsHide: true }, (error, stdout, stderr) => {
+    execFile(file, args, { cwd, timeout, signal, maxBuffer: 4 * 1024 * 1024, windowsHide: true }, (error, stdout, stderr) => {
       if (error && !stdout && !stderr) return reject(error);
       resolve(clip(`${stdout}${stderr ? `\n[stderr]\n${stderr}` : ""}`.trim() || "(no output)"));
     });
@@ -209,7 +209,7 @@ export function createTools(context: ToolContext): ToolSpec[] {
         },
       },
       "process",
-      async (args) => runFile(text(args, "command"), strings(args, "args"), resolveWorkspacePath(root, text(args, "cwd", ".")), numberArg(args, "timeoutMs", 60_000)),
+      async (args, signal) => runFile(text(args, "command"), strings(args, "args"), resolveWorkspacePath(root, text(args, "cwd", ".")), numberArg(args, "timeoutMs", 60_000), signal),
     ),
     tool(
       {
@@ -218,8 +218,8 @@ export function createTools(context: ToolContext): ToolSpec[] {
         parameters: { type: "object", properties: { command: { type: "string" }, cwd: { type: "string" } }, required: ["command"], additionalProperties: false },
       },
       "external",
-      async (args) => new Promise((resolve, reject) => {
-        exec(text(args, "command"), { cwd: resolveWorkspacePath(root, text(args, "cwd", ".")), timeout: 60_000, maxBuffer: 4 * 1024 * 1024 }, (error, stdout, stderr) => {
+      async (args, signal) => new Promise((resolve, reject) => {
+        exec(text(args, "command"), { cwd: resolveWorkspacePath(root, text(args, "cwd", ".")), timeout: 60_000, signal, maxBuffer: 4 * 1024 * 1024 }, (error, stdout, stderr) => {
           if (error && !stdout && !stderr) return reject(error);
           resolve(clip(`${stdout}${stderr ? `\n[stderr]\n${stderr}` : ""}`.trim() || "(no output)"));
         });
@@ -232,7 +232,7 @@ export function createTools(context: ToolContext): ToolSpec[] {
         parameters: { type: "object", properties: { args: { type: "array", items: { type: "string" } } }, additionalProperties: false },
       },
       "read",
-      async (args) => runFile("git", [subcommand, ...strings(args, "args")], root),
+      async (args, signal) => runFile("git", [subcommand, ...strings(args, "args")], root, 60_000, signal),
     )),
     tool(
       {
@@ -241,10 +241,10 @@ export function createTools(context: ToolContext): ToolSpec[] {
         parameters: { type: "object", properties: { url: { type: "string" } }, required: ["url"], additionalProperties: false },
       },
       "network",
-      async (args) => {
+      async (args, signal) => {
         let url = await validatePublicUrl(text(args, "url"));
         for (let redirects = 0; redirects <= 5; redirects++) {
-          const response = await fetch(url, { redirect: "manual", headers: { "User-Agent": "forge-cli/0.2" } });
+          const response = await fetch(url, { redirect: "manual", signal, headers: { "User-Agent": "forge-cli/0.3" } });
           if (response.status >= 300 && response.status < 400) {
             const location = response.headers.get("location");
             if (!location) throw new Error("Redirect response had no location.");

@@ -36,6 +36,7 @@ export const SLASH_COMMANDS = [
   { name: "load", usage: "/load <name>", description: "Load a session" },
   { name: "sessions", usage: "/sessions", description: "List saved sessions" },
   { name: "cost", usage: "/cost", description: "Show token usage and estimated cost" },
+  { name: "limit", usage: "/limit show|set|clear", description: "Show or configure usage-plan limits" },
   { name: "theme", usage: "/theme", description: "Cycle the terminal theme" },
   { name: "exit", aliases: ["quit"], usage: "/exit", description: "Quit Forge" },
 ] satisfies SlashCommandDefinition[];

@@ -9,6 +9,7 @@ import { startRuntime, stopOwnedRuntime } from "./runtime/process.js";
 import type { RuntimeKind } from "./config.js";
 import { listSessions, loadSession } from "./session.js";
 import { VERSION } from "./version.js";
+import { clearProfileUsage, loadUsageLedger } from "./usage-store.js";
 
 function requireConfig(): ForgeConfig {
   if (!configExists()) throw new Error("Forge is not configured. Run `forge chat` once to start setup.");
@@ -26,10 +27,19 @@ async function startInteractive(): Promise<void> {
   await startRepl(config);
 }
 
+/** Decide whether the default command can safely launch the full-screen interface. */
+export function shouldLaunchTui(config: ForgeConfig, terminal: { inputIsTTY?: boolean; outputIsTTY?: boolean; columns?: number; rows?: number }): boolean {
+  return config.ui.mode === "tui"
+    && terminal.inputIsTTY === true
+    && terminal.outputIsTTY === true
+    && (terminal.columns ?? 80) >= 72
+    && (terminal.rows ?? 24) >= 18;
+}
+
 async function startPreferredInterface(): Promise<void> {
   const config = await interactiveConfig();
   if (!config.activeProfile || !config.profiles[config.activeProfile]) throw new Error("No active profile. Use `forge model use` or add a provider.");
-  if (config.ui.mode === "tui") {
+  if (shouldLaunchTui(config, { inputIsTTY: process.stdin.isTTY, outputIsTTY: process.stdout.isTTY, columns: process.stdout.columns, rows: process.stdout.rows })) {
     const { startTui } = await import("./tui.js");
     await startTui(config);
     return;
@@ -86,10 +96,10 @@ function printRuntimeSummaries(summaries: Awaited<ReturnType<typeof listRuntimeS
 function addCompletionCommand(program: Command): void {
   program.command("completion <shell>").description("Generate shell completion setup").action((shell: string) => {
     const scripts: Record<string, string> = {
-      powershell: "Register-ArgumentCompleter -Native -CommandName forge -ScriptBlock { param($wordToComplete) 'chat','tui','run','model','runtime','session','doctor','completion' | Where-Object { $_ -like \"$wordToComplete*\" } | ForEach-Object { [System.Management.Automation.CompletionResult]::new($_,$_, 'ParameterValue', $_) } }",
-      bash: "complete -W 'chat tui run model runtime session doctor completion' forge",
-      zsh: "compdef '_arguments \"1:command:(chat tui run model runtime session doctor completion)\"' forge",
-      fish: "complete -c forge -f -a 'chat tui run model runtime session doctor completion'",
+      powershell: "Register-ArgumentCompleter -Native -CommandName forge -ScriptBlock { param($wordToComplete) 'chat','tui','run','model','runtime','session','limit','doctor','completion' | Where-Object { $_ -like \"$wordToComplete*\" } | ForEach-Object { [System.Management.Automation.CompletionResult]::new($_,$_, 'ParameterValue', $_) } }",
+      bash: "complete -W 'chat tui run model runtime session limit doctor completion' forge",
+      zsh: "compdef '_arguments \"1:command:(chat tui run model runtime session limit doctor completion)\"' forge",
+      fish: "complete -c forge -f -a 'chat tui run model runtime session limit doctor completion'",
     };
     const script = scripts[shell];
     if (!script) throw new Error("Shell must be powershell, bash, zsh, or fish.");
@@ -161,6 +171,48 @@ export function createProgram(): Command {
   session.command("export <name> <file>").action((name: string, file: string) => {
     fs.writeFileSync(file, JSON.stringify(loadSession(name), null, 2), "utf-8");
     printOk(`Exported ${name} to ${file}.`);
+  });
+
+  const limit = program.command("limit").description("Show or configure subscription and usage limits");
+  limit.command("show").option("--json").action((options: { json?: boolean }) => {
+    const config = requireConfig();
+    const value = config.profiles[config.activeProfile].subscription ?? null;
+    const consumed = loadUsageLedger().profiles[config.activeProfile];
+    const consumedTokens = (consumed?.promptTokens ?? 0) + (consumed?.completionTokens ?? 0);
+    console.log(options.json ? JSON.stringify({ subscription: value, consumedTokens }) : value
+      ? `Plan: ${value.name ?? "configured"}; tokens: ${consumedTokens.toLocaleString("en-US")}/${value.tokenLimit?.toLocaleString("en-US") ?? "not set"}; session cost ceiling: ${value.costLimitUsd != null ? `$${value.costLimitUsd}` : "not set"}; reset: ${value.resetAt ?? "not set"}`
+      : "No subscription limit is configured. Provider-reported rate limits still appear automatically when available.");
+  });
+  limit.command("set").description("Configure a plan label and optional token/cost ceiling")
+    .option("--name <label>", "Subscription or plan label")
+    .option("--tokens <count>", "Token ceiling", (value) => Number(value))
+    .option("--cost <usd>", "Cost ceiling in USD", (value) => Number(value))
+    .option("--reset <date>", "ISO date/time when the limit resets")
+    .action((options: { name?: string; tokens?: number; cost?: number; reset?: string }) => {
+      if (options.tokens != null && (!Number.isInteger(options.tokens) || options.tokens <= 0)) throw new Error("--tokens must be a positive integer.");
+      if (options.cost != null && (!Number.isFinite(options.cost) || options.cost <= 0)) throw new Error("--cost must be a positive number.");
+      let resetAt: string | undefined;
+      if (options.reset) {
+        const parsed = new Date(options.reset);
+        if (Number.isNaN(parsed.getTime())) throw new Error("--reset must be a valid ISO date/time.");
+        resetAt = parsed.toISOString();
+      }
+      if (!options.name && options.tokens == null && options.cost == null && !resetAt) throw new Error("Set at least one of --name, --tokens, --cost, or --reset.");
+      const config = requireConfig();
+      config.profiles[config.activeProfile].subscription = { name: options.name, tokenLimit: options.tokens, costLimitUsd: options.cost, resetAt };
+      saveConfig(config);
+      printOk(`Usage limits configured for ${config.activeProfile}.`);
+    });
+  limit.command("clear").action(() => {
+    const config = requireConfig();
+    delete config.profiles[config.activeProfile].subscription;
+    saveConfig(config);
+    printOk(`Usage limits cleared for ${config.activeProfile}.`);
+  });
+  limit.command("reset-usage").description("Reset Forge's local cumulative token counter for the active profile").action(() => {
+    const config = requireConfig();
+    clearProfileUsage(config.activeProfile);
+    printOk(`Local usage counter reset for ${config.activeProfile}.`);
   });
 
   program.command("doctor").description("Diagnose configuration and local runtimes").option("--json").action(async (options: { json?: boolean }) => {

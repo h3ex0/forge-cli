@@ -1,4 +1,4 @@
-import type { ChatDriver, ChatMessage, StreamCallbacks, ToolCall, ToolDef } from "./types.js";
+import type { ChatDriver, ChatMessage, ProviderRateLimits, StreamCallbacks, ToolCall, ToolDef } from "./types.js";
 
 interface OpenAIProfile {
   baseURL: string;
@@ -35,7 +35,7 @@ function toOpenAITools(tools: ToolDef[]): unknown[] | undefined {
 
 export function createOpenAIDriver(profile: OpenAIProfile): ChatDriver {
   return {
-    async streamChat(messages, tools, model, cb: StreamCallbacks) {
+    async streamChat(messages, tools, model, cb: StreamCallbacks, signal?: AbortSignal) {
       const url = `${profile.baseURL.replace(/\/$/, "")}/chat/completions`;
       let res: Response;
       try {
@@ -52,6 +52,7 @@ export function createOpenAIDriver(profile: OpenAIProfile): ChatDriver {
             stream: true,
             stream_options: { include_usage: true },
           }),
+          signal,
         });
       } catch (err) {
         cb.onError(err as Error);
@@ -68,6 +69,19 @@ export function createOpenAIDriver(profile: OpenAIProfile): ChatDriver {
       const decoder = new TextDecoder();
       let buffer = "";
       const pendingToolCalls: Map<number, ToolCall> = new Map();
+      const numberHeader = (name: string): number | undefined => {
+        const value = res.headers.get(name);
+        if (!value) return undefined;
+        const parsed = Number(value);
+        return Number.isFinite(parsed) ? parsed : undefined;
+      };
+      const rateLimits: ProviderRateLimits = {
+        tokenLimit: numberHeader("x-ratelimit-limit-tokens"),
+        tokenRemaining: numberHeader("x-ratelimit-remaining-tokens"),
+        requestLimit: numberHeader("x-ratelimit-limit-requests"),
+        requestRemaining: numberHeader("x-ratelimit-remaining-requests"),
+        reset: res.headers.get("x-ratelimit-reset-tokens") ?? res.headers.get("x-ratelimit-reset-requests") ?? undefined,
+      };
       let usage: { promptTokens?: number; completionTokens?: number } | undefined;
 
       try {
@@ -123,7 +137,7 @@ export function createOpenAIDriver(profile: OpenAIProfile): ChatDriver {
       if (pendingToolCalls.size > 0) {
         cb.onToolCallsComplete(Array.from(pendingToolCalls.values()));
       }
-      cb.onDone(usage);
+      cb.onDone({ ...usage, rateLimits: Object.values(rateLimits).some((value) => value !== undefined) ? rateLimits : undefined });
     },
   };
 }

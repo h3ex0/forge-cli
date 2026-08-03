@@ -15,7 +15,7 @@ describe("configuration migration", () => {
       },
     });
 
-    expect(result.schemaVersion).toBe(2);
+    expect(result.schemaVersion).toBe(3);
     expect(result.activeProfile).toBe("signor");
     expect(result.profiles.signor).toMatchObject({
       kind: "remote",
@@ -24,6 +24,17 @@ describe("configuration migration", () => {
     });
     expect(result.permissions.mode).toBe("balanced");
     expect(result.runtimes.ollama.baseURL).toBe("http://127.0.0.1:11434/v1");
+    expect(result.ui.mode).toBe("tui");
+  });
+
+  it("moves v2 installations to the new TUI-first default", () => {
+    const result = migrateConfig({
+      ...structuredClone(DEFAULT_CONFIG),
+      schemaVersion: 2,
+      ui: { mode: "inline", theme: "flame" },
+    });
+    expect(result.schemaVersion).toBe(3);
+    expect(result.ui.mode).toBe("tui");
   });
 
   it("returns isolated defaults", () => {

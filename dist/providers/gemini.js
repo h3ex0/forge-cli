@@ -49,7 +49,7 @@ function toGeminiTools(tools) {
 }
 export function createGeminiDriver(profile) {
     return {
-        async streamChat(messages, tools, model, cb) {
+        async streamChat(messages, tools, model, cb, signal) {
             const url = `${profile.baseURL.replace(/\/$/, "")}/models/${model}:streamGenerateContent?alt=sse`;
             const { systemInstruction, contents } = toGeminiContents(messages);
             let res;
@@ -65,6 +65,7 @@ export function createGeminiDriver(profile) {
                         systemInstruction,
                         tools: toGeminiTools(tools),
                     }),
+                    signal,
                 });
             }
             catch (err) {

@@ -470,6 +470,38 @@ export async function handleCommand(input, state) {
             printSystem(`Cumulative usage — prompt tokens: ${state.usage.promptTokens}, completion tokens: ${state.usage.completionTokens}${costLine}`);
             return "handled";
         }
+        case "limit": {
+            const profile = state.cfg.profiles[state.cfg.activeProfile];
+            const sub = rest[0] ?? "show";
+            if (sub === "show") {
+                const limit = profile.subscription;
+                printSystem(limit
+                    ? `Plan: ${limit.name ?? "configured"}; tokens: ${limit.tokenLimit?.toLocaleString("en-US") ?? "not set"}; cost: ${limit.costLimitUsd != null ? `$${limit.costLimitUsd}` : "not set"}; reset: ${limit.resetAt ?? "not set"}`
+                    : "No configured subscription limit. Provider rate limits appear automatically when exposed.");
+                return "handled";
+            }
+            if (sub === "clear") {
+                delete profile.subscription;
+                state.persistConfig();
+                printOk("Subscription limit cleared.");
+                return "handled";
+            }
+            if (sub === "set") {
+                const tokenLimit = Number(rest[1]);
+                const costLimitUsd = rest[2] ? Number(rest[2]) : undefined;
+                const name = rest.slice(3).join(" ") || undefined;
+                if (!Number.isInteger(tokenLimit) || tokenLimit <= 0 || (costLimitUsd != null && (!Number.isFinite(costLimitUsd) || costLimitUsd <= 0))) {
+                    printWarn("Usage: /limit set <token-limit> [cost-limit-usd] [plan-name]");
+                    return "handled";
+                }
+                profile.subscription = { tokenLimit, costLimitUsd, name };
+                state.persistConfig();
+                printOk("Subscription limit configured.");
+                return "handled";
+            }
+            printWarn("Usage: /limit show|set|clear");
+            return "handled";
+        }
         case "theme": {
             state.cfg.ui.theme = state.cfg.ui.theme === "flame" ? "cool" : "flame";
             state.persistConfig();

@@ -1,10 +1,8 @@
 import { AppState } from "./repl-state.js";
 import { createLineSource } from "./line-source.js";
 import { handleCommand } from "./commands/index.js";
-import { createDriver } from "./providers/index.js";
+import { AgentSession } from "./agent/session.js";
 import { fetchModels } from "./providers/models.js";
-import { createTools } from "./tools/index.js";
-import { decidePermission } from "./security/policy.js";
 import { printStatusLine } from "./statusline.js";
 import {
   colors,
@@ -17,141 +15,60 @@ import {
   printToolResult,
   printWarn,
 } from "./ui.js";
-import type { ToolCall } from "./providers/types.js";
 import type { ForgeConfig } from "./config.js";
+import { sanitizeTerminalText, sanitizeToolArguments } from "./tui/sanitize.js";
 
-const MAX_TOOL_ITERATIONS = 10;
-
-async function runTurn(state: AppState): Promise<void> {
-  const profile = state.cfg.profiles[state.cfg.activeProfile];
-  const driver = createDriver(profile);
-  const toolSpecs = createTools({ workspaceRoot: state.cfg.permissions.workspaceRoot });
-  const availableTools = state.cfg.routing.offline ? toolSpecs.filter((tool) => tool.risk !== "network") : toolSpecs;
-  const tools = availableTools.map((tool) => tool.def);
-
-  for (let iteration = 0; iteration < MAX_TOOL_ITERATIONS; iteration++) {
-    let assistantText = "";
-    let toolCalls: ToolCall[] = [];
-    let errored = false;
-    let printedPrefix = false;
-
-    await driver.streamChat(state.modelMessages(), tools, profile.model, {
-      onTextDelta: (delta) => {
-        if (!printedPrefix) {
-          printAssistantPrefix(profile.model);
-          printedPrefix = true;
-        }
-        process.stdout.write(delta);
-        assistantText += delta;
-      },
-      onToolCallsComplete: (calls) => {
-        toolCalls = calls;
-      },
-      onDone: (usage) => {
-        if (usage?.promptTokens) state.usage.promptTokens += usage.promptTokens;
-        if (usage?.completionTokens) state.usage.completionTokens += usage.completionTokens;
-      },
-      onError: (err) => {
-        errored = true;
-        printError(`Provider error: ${err.message}`);
-      },
-    });
-
-    if (errored) return;
-
-    if (printedPrefix) {
-      console.log();
-    }
-
-    if (toolCalls.length === 0) {
-      if (!assistantText) {
-        printWarn("Provider returned an empty response (no text, no tool calls, no error). Try again or check /model.");
+async function runTurn(state: AppState, prompt: string): Promise<void> {
+  let assistantStarted = false;
+  const session = new AgentSession({
+    config: state.cfg,
+    messages: state.messages,
+    usage: state.usage,
+    getContextMessages: () => state.modelMessages(),
+    approve: ({ call }) => state.confirm(`Allow tool "${call.name}" to run?`),
+  });
+  const unsubscribe = session.subscribe((event) => {
+    if (event.type === "text.delta") {
+      if (!assistantStarted) {
+        printAssistantPrefix(state.cfg.profiles[state.cfg.activeProfile].model);
+        assistantStarted = true;
       }
-      state.messages.push({ role: "assistant", content: assistantText });
-      return;
+      process.stdout.write(sanitizeTerminalText(event.delta));
+    } else if (event.type === "tool.requested") {
+      printToolCall(sanitizeTerminalText(event.activity.name), sanitizeToolArguments(event.activity.args));
+    } else if (event.type === "tool.updated" && ["completed", "failed", "denied"].includes(event.activity.status)) {
+      printToolResult(sanitizeTerminalText(event.activity.result ?? event.activity.status));
+    } else if (event.type === "turn.failed") {
+      printError(sanitizeTerminalText(event.error.message));
+    } else if (event.type === "turn.cancelled") {
+      printWarn("Turn cancelled.");
     }
-
-    state.messages.push({ role: "assistant", content: assistantText, tool_calls: toolCalls });
-
-    for (const call of toolCalls) {
-      let args: any = {};
-      try {
-        args = JSON.parse(call.arguments || "{}");
-      } catch {
-        // leave args empty if malformed
-      }
-      printToolCall(call.name, args);
-      const tool = availableTools.find((candidate) => candidate.def.name === call.name);
-      let resultText: string;
-      if (!tool) {
-        resultText = `Error: unknown tool "${call.name}"`;
-      } else {
-        const decision = decidePermission(state.cfg.permissions.mode, tool.risk);
-        if (decision === "deny") {
-          resultText = `Permission denied: ${state.cfg.permissions.mode} mode blocks ${tool.risk} tools.`;
-          printWarn(resultText);
-        } else if (decision === "ask") {
-        const ok = await state.confirm(`Allow tool "${call.name}" to run?`);
-        if (!ok) {
-          resultText = "User denied permission to run this tool.";
-          printWarn("Denied.");
-        } else {
-          try {
-            resultText = await tool.execute(args);
-            printToolResult(resultText);
-          } catch (err) {
-            resultText = `Error: ${(err as Error).message}`;
-            printError(resultText);
-          }
-        }
-        } else {
-          try {
-            resultText = await tool.execute(args);
-            printToolResult(resultText);
-          } catch (err) {
-            resultText = `Error: ${(err as Error).message}`;
-            printError(resultText);
-          }
-        }
-      }
-      state.messages.push({
-        role: "tool",
-        content: resultText,
-        tool_call_id: call.id,
-        name: call.name,
-      });
-    }
-    // loop again so the model sees tool results and continues
+  });
+  try {
+    await session.send(prompt);
+    if (assistantStarted) console.log();
+  } finally {
+    unsubscribe();
   }
-
-  printWarn("Reached max tool iterations for this turn.");
 }
 
-export async function startRepl(cfg: ForgeConfig) {
+export async function startRepl(cfg: ForgeConfig): Promise<void> {
   const reader = createLineSource();
   const state = new AppState(cfg, reader);
 
   printSystem(`Active provider: ${state.cfg.activeProfile} (${state.cfg.profiles[state.cfg.activeProfile].model})`);
   printSystem("Type /help for commands, or just start chatting. Ctrl+C or /exit to quit.\n");
 
-  // Best-effort: warm the pricing cache for the active profile so the status
-  // line can show an estimated cost from the first turn onward.
   fetchModels(state.cfg.profiles[state.cfg.activeProfile])
     .then((models) => {
-      for (const m of models) state.pricingCache.set(`${state.cfg.activeProfile}:${m.id}`, m);
+      for (const model of models) state.pricingCache.set(`${state.cfg.activeProfile}:${model.id}`, model);
     })
-    .catch(() => {
-      // provider has no /models endpoint or pricing info — statusline just omits cost
-    });
+    .catch(() => undefined);
 
-  // A single reader queue (see line-source.ts) drives both the main prompt and
-  // any nested confirm() prompts for destructive tools, so lines are never
-  // dropped (piped/multi-line bursts) and never double-consumed (racing listeners).
   while (!state.reader.isExhausted()) {
     printStatusLine(state);
     const input = await state.ask(colors.prompt("You › "));
     if (state.reader.isExhausted() && !input) break;
-
     const trimmed = input.trim();
     if (!trimmed) continue;
 
@@ -162,21 +79,14 @@ export async function startRepl(cfg: ForgeConfig) {
       break;
     }
     if (state.pendingPrompt) {
-      const prompt = state.pendingPrompt;
+      const pending = state.pendingPrompt;
       state.pendingPrompt = null;
-      state.messages.push({ role: "user", content: prompt });
-      try { await runTurn(state); } catch (err) { printError(`Unexpected error: ${(err as Error).message}`); }
+      await runTurn(state, pending).catch((error: unknown) => printError(`Unexpected error: ${error instanceof Error ? error.message : String(error)}`));
       divider();
       continue;
     }
     if (cmdResult === "handled") continue;
-
-    state.messages.push({ role: "user", content: trimmed });
-    try {
-      await runTurn(state);
-    } catch (err) {
-      printError(`Unexpected error: ${(err as Error).message}`);
-    }
+    await runTurn(state, trimmed).catch((error: unknown) => printError(`Unexpected error: ${error instanceof Error ? error.message : String(error)}`));
     divider();
   }
 }

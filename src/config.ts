@@ -5,6 +5,7 @@ import readline from "node:readline";
 import { z } from "zod";
 import { colors, printOk, printSystem, printWarn } from "./ui.js";
 import { loadProfileSecret, storeProfileSecret } from "./security/secrets.js";
+import { clearProfileUsage } from "./usage-store.js";
 
 export type ApiFormat = "openai" | "anthropic" | "gemini";
 export type ProfileKind = "remote" | "local";
@@ -19,10 +20,16 @@ export interface Profile {
   model: string;
   kind: ProfileKind;
   runtime?: RuntimeKind;
+  subscription?: {
+    name?: string;
+    tokenLimit?: number;
+    costLimitUsd?: number;
+    resetAt?: string;
+  };
 }
 
 export interface ForgeConfig {
-  schemaVersion: 2;
+  schemaVersion: 3;
   activeProfile: string;
   profiles: Record<string, Profile>;
   permissions: { mode: PermissionMode; workspaceRoot: string };
@@ -42,10 +49,16 @@ const profileSchema = z.object({
   model: z.string().min(1),
   kind: z.enum(["remote", "local"]).default("remote"),
   runtime: z.enum(["ollama", "lmstudio", "llamacpp", "openai-compatible"]).optional(),
+  subscription: z.object({
+    name: z.string().min(1).max(80).optional(),
+    tokenLimit: z.number().int().positive().optional(),
+    costLimitUsd: z.number().positive().optional(),
+    resetAt: z.string().datetime({ offset: true }).optional(),
+  }).optional(),
 });
 
 const configSchema = z.object({
-  schemaVersion: z.literal(2),
+  schemaVersion: z.literal(3),
   activeProfile: z.string(),
   profiles: z.record(z.string(), profileSchema),
   permissions: z.object({
@@ -65,12 +78,12 @@ const configSchema = z.object({
 });
 
 export const DEFAULT_CONFIG: ForgeConfig = {
-  schemaVersion: 2,
+  schemaVersion: 3,
   activeProfile: "",
   profiles: {},
   permissions: { mode: "balanced", workspaceRoot: process.cwd() },
   routing: { mode: "manual", offline: false, askBeforeCloud: true },
-  ui: { mode: "inline", theme: "flame" },
+  ui: { mode: "tui", theme: "flame" },
   runtimes: {
     ollama: { baseURL: "http://127.0.0.1:11434/v1", executable: "ollama" },
     lmstudio: { baseURL: "http://127.0.0.1:1234/v1", executable: "lms" },
@@ -82,7 +95,11 @@ export const DEFAULT_CONFIG: ForgeConfig = {
 export function migrateConfig(raw: unknown): ForgeConfig {
   if (!raw || typeof raw !== "object") return structuredClone(DEFAULT_CONFIG);
   const candidate = raw as Record<string, unknown>;
-  if (candidate.schemaVersion === 2) return configSchema.parse(candidate);
+  if (candidate.schemaVersion === 3) return configSchema.parse(candidate);
+
+  if (candidate.schemaVersion === 2) {
+    return configSchema.parse({ ...candidate, schemaVersion: 3, ui: { ...((candidate.ui as object | undefined) ?? {}), mode: "tui" } });
+  }
 
   const legacyProfiles = (candidate.profiles && typeof candidate.profiles === "object" ? candidate.profiles : {}) as Record<string, unknown>;
   const profiles: Record<string, Profile> = {};
@@ -104,16 +121,21 @@ export function configExists(): boolean {
 export function loadConfig(): ForgeConfig {
   const raw = fs.readFileSync(CONFIG_PATH, "utf-8");
   const config = migrateConfig(JSON.parse(raw));
-  let migratedSecret = false;
+  let shouldSave = false;
   for (const [name, profile] of Object.entries(config.profiles)) {
+    if (profile.subscription?.resetAt && Date.parse(profile.subscription.resetAt) <= Date.now()) {
+      try { clearProfileUsage(name); } catch { /* usage reset must not block startup */ }
+      delete profile.subscription.resetAt;
+      shouldSave = true;
+    }
     if (profile.kind !== "remote") continue;
     if (profile.apiKey) {
-      migratedSecret = storeProfileSecret(name, profile.apiKey) || migratedSecret;
+      shouldSave = storeProfileSecret(name, profile.apiKey) || shouldSave;
     } else {
       profile.apiKey = loadProfileSecret(name);
     }
   }
-  if (migratedSecret) saveConfig(config);
+  if (shouldSave) saveConfig(config);
   return config;
 }
 

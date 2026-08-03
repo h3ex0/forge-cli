@@ -27,7 +27,7 @@ function toOpenAITools(tools) {
 }
 export function createOpenAIDriver(profile) {
     return {
-        async streamChat(messages, tools, model, cb) {
+        async streamChat(messages, tools, model, cb, signal) {
             const url = `${profile.baseURL.replace(/\/$/, "")}/chat/completions`;
             let res;
             try {
@@ -44,6 +44,7 @@ export function createOpenAIDriver(profile) {
                         stream: true,
                         stream_options: { include_usage: true },
                     }),
+                    signal,
                 });
             }
             catch (err) {
@@ -59,6 +60,20 @@ export function createOpenAIDriver(profile) {
             const decoder = new TextDecoder();
             let buffer = "";
             const pendingToolCalls = new Map();
+            const numberHeader = (name) => {
+                const value = res.headers.get(name);
+                if (!value)
+                    return undefined;
+                const parsed = Number(value);
+                return Number.isFinite(parsed) ? parsed : undefined;
+            };
+            const rateLimits = {
+                tokenLimit: numberHeader("x-ratelimit-limit-tokens"),
+                tokenRemaining: numberHeader("x-ratelimit-remaining-tokens"),
+                requestLimit: numberHeader("x-ratelimit-limit-requests"),
+                requestRemaining: numberHeader("x-ratelimit-remaining-requests"),
+                reset: res.headers.get("x-ratelimit-reset-tokens") ?? res.headers.get("x-ratelimit-reset-requests") ?? undefined,
+            };
             let usage;
             try {
                 while (true) {
@@ -121,7 +136,7 @@ export function createOpenAIDriver(profile) {
             if (pendingToolCalls.size > 0) {
                 cb.onToolCallsComplete(Array.from(pendingToolCalls.values()));
             }
-            cb.onDone(usage);
+            cb.onDone({ ...usage, rateLimits: Object.values(rateLimits).some((value) => value !== undefined) ? rateLimits : undefined });
         },
     };
 }

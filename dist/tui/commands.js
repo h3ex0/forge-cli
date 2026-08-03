@@ -1,0 +1,207 @@
+import fs from "node:fs";
+import { loadSession, saveSession, defaultSessionName } from "../session.js";
+import { parseSlashCommand } from "../commands/parser.js";
+import { slashCommandNames } from "../commands/registry.js";
+import { activateLocalModel } from "../runtime/service.js";
+import { createTools } from "../tools/index.js";
+import { detectProject, loadProjectInstructions } from "../project.js";
+/** Return bounded slash-command completions for the current composer input. */
+export function tuiCommandSuggestions(input) {
+    if (!input.startsWith("/") || input.includes(" "))
+        return [];
+    const prefix = input.slice(1).toLowerCase();
+    return slashCommandNames().filter((name) => name.startsWith(prefix)).slice(0, 6).map((name) => `/${name}`);
+}
+/** Parse a TUI slash command into a typed frontend action without printing output. */
+export function executeTuiCommand(input, context) {
+    const parsed = parseSlashCommand(input);
+    if (!parsed)
+        return { type: "not-command" };
+    const arg = parsed.args.join(" ");
+    const config = context.config;
+    const profile = config.profiles[config.activeProfile];
+    switch (parsed.name) {
+        case "exit":
+        case "quit": return { type: "exit" };
+        case "help": return { type: "overlay", overlay: "help" };
+        case "new":
+        case "clear": return { type: "clear" };
+        case "model": {
+            if (!arg || parsed.args[0] === "list")
+                return { type: "overlay", overlay: "models" };
+            if (parsed.args[0] === "info") {
+                const reference = parsed.args.slice(1).join(" ");
+                return reference ? { type: "model-info", reference } : { type: "notice", message: "Usage: /model info <runtime:model-id>" };
+            }
+            if (parsed.args[0] === "pull") {
+                const reference = parsed.args.slice(1).join(" ");
+                return reference ? { type: "model-pull", reference } : { type: "notice", message: "Usage: /model pull <runtime:model-id>" };
+            }
+            const reference = parsed.args[0] === "use" ? parsed.args.slice(1).join(" ") : arg;
+            if (!reference)
+                return { type: "notice", message: "Usage: /model use <profile-model-id|runtime:model-id>" };
+            if (/^(ollama|lmstudio|llamacpp|openai-compatible):/.test(reference))
+                activateLocalModel(config, reference);
+            else
+                profile.model = reference;
+            context.persist();
+            return { type: "notice", message: `Using ${reference}.` };
+        }
+        case "runtime": {
+            const operation = parsed.args[0] ?? "list";
+            if (!["list", "status", "start", "stop"].includes(operation))
+                return { type: "notice", message: "Usage: /runtime list|status|start|stop [kind] [model-path]" };
+            return { type: "runtime", operation: operation, kind: parsed.args[1], modelPath: parsed.args.slice(2).join(" ") || undefined };
+        }
+        case "mode": {
+            if (!arg)
+                return { type: "notice", message: `Permission mode: ${config.permissions.mode}` };
+            if (!["read-only", "balanced", "autonomous"].includes(arg))
+                return { type: "notice", message: "Usage: /mode read-only|balanced|autonomous" };
+            config.permissions.mode = arg;
+            context.persist();
+            return { type: "notice", message: `Permission mode set to ${arg}.` };
+        }
+        case "offline": {
+            if (arg !== "on" && arg !== "off")
+                return { type: "notice", message: `Offline mode is ${config.routing.offline ? "on" : "off"}. Usage: /offline on|off` };
+            config.routing.offline = arg === "on";
+            context.persist();
+            return { type: "notice", message: `Offline mode ${arg}.` };
+        }
+        case "route": {
+            if (arg !== "manual" && arg !== "auto")
+                return { type: "notice", message: `Routing is ${config.routing.mode}. Usage: /route manual|auto` };
+            config.routing.mode = arg;
+            context.persist();
+            return { type: "notice", message: `Routing mode set to ${arg}.` };
+        }
+        case "workspace": {
+            if (!arg)
+                return { type: "notice", message: `Workspace: ${config.permissions.workspaceRoot}` };
+            try {
+                const workspace = fs.realpathSync(arg);
+                if (!fs.statSync(workspace).isDirectory())
+                    throw new Error("not a directory");
+                context.setWorkspace(workspace);
+                return { type: "notice", message: `Workspace set to ${workspace}.` };
+            }
+            catch (error) {
+                return { type: "notice", message: `Invalid workspace: ${error instanceof Error ? error.message : String(error)}` };
+            }
+        }
+        case "context": {
+            const sub = parsed.args[0] ?? "list";
+            if (sub === "list")
+                return { type: "overlay", overlay: "context" };
+            if (sub === "clear") {
+                context.contextFiles.clear();
+                return { type: "notice", message: "Pinned context cleared." };
+            }
+            if (sub === "drop") {
+                const file = parsed.args.slice(1).join(" ");
+                return { type: "notice", message: context.contextFiles.delete(file) ? `Dropped ${file}.` : `${file} was not pinned.` };
+            }
+            return { type: "overlay", overlay: "context" };
+        }
+        case "save":
+        case "checkpoint": {
+            const name = arg || defaultSessionName();
+            saveSession(name, context.messages);
+            return { type: "notice", message: `Session saved as ${name}.` };
+        }
+        case "load": {
+            if (!arg)
+                return { type: "overlay", overlay: "sessions" };
+            try {
+                return { type: "load", messages: loadSession(arg), name: arg };
+            }
+            catch {
+                return { type: "notice", message: `Could not load session ${arg}.` };
+            }
+        }
+        case "sessions": return { type: "overlay", overlay: "sessions" };
+        case "history": return { type: "notice", message: `${context.messages.filter((message) => message.role !== "system").length} conversation messages are available in scrollback.` };
+        case "instructions": {
+            const items = loadProjectInstructions(config.permissions.workspaceRoot);
+            return { type: "notice", message: items.length ? items.map((item) => `${item.file} (${item.content.length} chars)`).join(" · ") : "No FORGE.md or AGENTS.md found." };
+        }
+        case "index": {
+            const project = detectProject(config.permissions.workspaceRoot);
+            return { type: "notice", message: `Languages: ${project.languages.join(", ") || "unknown"} · package manager: ${project.packageManager ?? "none"} · Git: ${project.git ? "yes" : "no"} · scripts: ${project.scripts.join(", ") || "none"}` };
+        }
+        case "tree": return { type: "tool", name: "file_tree", args: { pattern: arg || "**/*" } };
+        case "diff": return { type: "tool", name: "git_diff", args: { args: parsed.args } };
+        case "git": {
+            const sub = parsed.args[0] ?? "status";
+            if (!["status", "diff", "log"].includes(sub))
+                return { type: "notice", message: "Usage: /git status|diff|log" };
+            return { type: "tool", name: `git_${sub}`, args: { args: parsed.args.slice(1) } };
+        }
+        case "test":
+        case "build": {
+            const project = detectProject(config.permissions.workspaceRoot);
+            const script = parsed.name === "build" ? "build" : (parsed.args[0] || "test");
+            if (!project.scripts.includes(script))
+                return { type: "notice", message: `No npm script named ${script} was detected.` };
+            return { type: "tool", name: "run_command", args: { command: process.platform === "win32" ? "npm.cmd" : "npm", args: ["run", script] } };
+        }
+        case "tools": return { type: "notice", message: createTools({ workspaceRoot: config.permissions.workspaceRoot }).map((tool) => `${tool.def.name} [${tool.risk}]`).join(" · ") };
+        case "doctor": return { type: "runtime", operation: "status" };
+        case "review": return { type: "prompt", prompt: `Review the current workspace changes${arg ? ` with focus on ${arg}` : ""}. Inspect the Git diff and report correctness, security, and test findings by severity.` };
+        case "plan": return arg ? { type: "prompt", prompt: `Create a decision-complete implementation plan for this workspace goal: ${arg}` } : { type: "notice", message: "Usage: /plan <goal>" };
+        case "fix": return arg ? { type: "prompt", prompt: `Diagnose and fix this workspace problem, using tools and tests as needed: ${arg}` } : { type: "notice", message: "Usage: /fix <problem>" };
+        case "ui": {
+            if (arg !== "inline" && arg !== "tui")
+                return { type: "notice", message: `UI mode is ${config.ui.mode}. Usage: /ui inline|tui` };
+            config.ui.mode = arg;
+            context.persist();
+            return { type: "notice", message: `Default UI set to ${arg}.` };
+        }
+        case "theme": {
+            config.ui.theme = config.ui.theme === "flame" ? "cool" : config.ui.theme === "cool" ? "contrast" : config.ui.theme === "contrast" ? "mono" : "flame";
+            context.persist();
+            return { type: "notice", message: `Theme set to ${config.ui.theme}.` };
+        }
+        case "cost":
+        case "status": return { type: "notice", message: "Current usage and limits are always visible in the bottom status line." };
+        case "limit": {
+            const sub = parsed.args[0] ?? "show";
+            if (sub === "show") {
+                const limit = profile.subscription;
+                return { type: "notice", message: limit ? `Plan ${limit.name ?? "configured"} · ${limit.tokenLimit?.toLocaleString("en-US") ?? "no token ceiling"} · ${limit.costLimitUsd != null ? `$${limit.costLimitUsd}` : "no cost ceiling"}` : "No configured subscription limit; provider rate limits still appear automatically." };
+            }
+            if (sub === "clear") {
+                delete profile.subscription;
+                context.persist();
+                return { type: "notice", message: "Subscription limit cleared." };
+            }
+            if (sub === "set") {
+                const tokenLimit = Number(parsed.args[1]);
+                const costLimitUsd = parsed.args[2] ? Number(parsed.args[2]) : undefined;
+                const name = parsed.args.slice(3).join(" ") || undefined;
+                if (!Number.isInteger(tokenLimit) || tokenLimit <= 0 || (costLimitUsd != null && (!Number.isFinite(costLimitUsd) || costLimitUsd <= 0)))
+                    return { type: "notice", message: "Usage: /limit set <token-limit> [cost-limit-usd] [plan-name]" };
+                profile.subscription = { tokenLimit, costLimitUsd, name };
+                context.persist();
+                return { type: "notice", message: "Subscription limit configured." };
+            }
+            return { type: "notice", message: "Usage: /limit show|set|clear" };
+        }
+        case "provider": {
+            const sub = parsed.args[0] ?? "list";
+            if (sub === "list")
+                return { type: "notice", message: Object.entries(config.profiles).map(([name, item]) => `${name === config.activeProfile ? "*" : " "} ${name}: ${item.model} (${item.kind})`).join(" · ") };
+            if (sub === "use") {
+                const name = parsed.args[1];
+                if (!name || !config.profiles[name])
+                    return { type: "notice", message: "Usage: /provider use <configured-profile>" };
+                config.activeProfile = name;
+                context.persist();
+                return { type: "notice", message: `Using provider ${name}.` };
+            }
+            return { type: "notice", message: "Provider creation requires masked input and remains available in forge chat." };
+        }
+        default: return { type: "notice", message: `/${parsed.name} requires the classic masked/administrative flow. Run forge chat for this operation.` };
+    }
+}

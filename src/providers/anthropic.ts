@@ -1,4 +1,4 @@
-import type { ChatDriver, ChatMessage, StreamCallbacks, ToolCall, ToolDef } from "./types.js";
+import type { ChatDriver, ChatMessage, ProviderRateLimits, StreamCallbacks, ToolCall, ToolDef } from "./types.js";
 
 interface AnthropicProfile {
   baseURL: string;
@@ -47,7 +47,7 @@ function buildRequest(messages: ChatMessage[], tools: ToolDef[]) {
 
 export function createAnthropicDriver(profile: AnthropicProfile): ChatDriver {
   return {
-    async streamChat(messages, tools, model, cb: StreamCallbacks) {
+    async streamChat(messages, tools, model, cb: StreamCallbacks, signal?: AbortSignal) {
       const url = `${profile.baseURL.replace(/\/$/, "")}/messages`;
       const { system, messages: msgs, tools: toolDefs } = buildRequest(messages, tools);
 
@@ -68,6 +68,7 @@ export function createAnthropicDriver(profile: AnthropicProfile): ChatDriver {
             max_tokens: 8192,
             stream: true,
           }),
+          signal,
         });
       } catch (err) {
         cb.onError(err as Error);
@@ -159,7 +160,20 @@ export function createAnthropicDriver(profile: AnthropicProfile): ChatDriver {
         .filter((b) => b.type === "tool_use" && b.toolCall)
         .map((b) => b.toolCall as ToolCall);
       if (toolCalls.length > 0) cb.onToolCallsComplete(toolCalls);
-      cb.onDone(usage);
+      const numberHeader = (name: string): number | undefined => {
+        const value = res.headers.get(name);
+        if (!value) return undefined;
+        const parsed = Number(value);
+        return Number.isFinite(parsed) ? parsed : undefined;
+      };
+      const rateLimits: ProviderRateLimits = {
+        tokenLimit: numberHeader("anthropic-ratelimit-tokens-limit"),
+        tokenRemaining: numberHeader("anthropic-ratelimit-tokens-remaining"),
+        requestLimit: numberHeader("anthropic-ratelimit-requests-limit"),
+        requestRemaining: numberHeader("anthropic-ratelimit-requests-remaining"),
+        reset: res.headers.get("anthropic-ratelimit-tokens-reset") ?? res.headers.get("anthropic-ratelimit-requests-reset") ?? undefined,
+      };
+      cb.onDone({ ...usage, rateLimits: Object.values(rateLimits).some((value) => value !== undefined) ? rateLimits : undefined });
     },
   };
 }

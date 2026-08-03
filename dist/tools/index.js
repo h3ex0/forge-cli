@@ -30,9 +30,9 @@ function strings(args, key) {
         throw new Error(`Expected string array: ${key}`);
     return value;
 }
-function runFile(file, args, cwd, timeout = 60_000) {
+function runFile(file, args, cwd, timeout = 60_000, signal) {
     return new Promise((resolve, reject) => {
-        execFile(file, args, { cwd, timeout, maxBuffer: 4 * 1024 * 1024, windowsHide: true }, (error, stdout, stderr) => {
+        execFile(file, args, { cwd, timeout, signal, maxBuffer: 4 * 1024 * 1024, windowsHide: true }, (error, stdout, stderr) => {
             if (error && !stdout && !stderr)
                 return reject(error);
             resolve(clip(`${stdout}${stderr ? `\n[stderr]\n${stderr}` : ""}`.trim() || "(no output)"));
@@ -172,13 +172,13 @@ export function createTools(context) {
                 required: ["command"],
                 additionalProperties: false,
             },
-        }, "process", async (args) => runFile(text(args, "command"), strings(args, "args"), resolveWorkspacePath(root, text(args, "cwd", ".")), numberArg(args, "timeoutMs", 60_000))),
+        }, "process", async (args, signal) => runFile(text(args, "command"), strings(args, "args"), resolveWorkspacePath(root, text(args, "cwd", ".")), numberArg(args, "timeoutMs", 60_000), signal)),
         tool({
             name: "bash_exec",
             description: "High-risk compatibility escape hatch: execute a shell command inside the workspace.",
             parameters: { type: "object", properties: { command: { type: "string" }, cwd: { type: "string" } }, required: ["command"], additionalProperties: false },
-        }, "external", async (args) => new Promise((resolve, reject) => {
-            exec(text(args, "command"), { cwd: resolveWorkspacePath(root, text(args, "cwd", ".")), timeout: 60_000, maxBuffer: 4 * 1024 * 1024 }, (error, stdout, stderr) => {
+        }, "external", async (args, signal) => new Promise((resolve, reject) => {
+            exec(text(args, "command"), { cwd: resolveWorkspacePath(root, text(args, "cwd", ".")), timeout: 60_000, signal, maxBuffer: 4 * 1024 * 1024 }, (error, stdout, stderr) => {
                 if (error && !stdout && !stderr)
                     return reject(error);
                 resolve(clip(`${stdout}${stderr ? `\n[stderr]\n${stderr}` : ""}`.trim() || "(no output)"));
@@ -188,15 +188,15 @@ export function createTools(context) {
             name: `git_${subcommand}`,
             description: `Run read-only git ${subcommand} in the workspace.`,
             parameters: { type: "object", properties: { args: { type: "array", items: { type: "string" } } }, additionalProperties: false },
-        }, "read", async (args) => runFile("git", [subcommand, ...strings(args, "args")], root))),
+        }, "read", async (args, signal) => runFile("git", [subcommand, ...strings(args, "args")], root, 60_000, signal))),
         tool({
             name: "web_fetch",
             description: "Fetch public HTTP(S) text after blocking private and loopback targets.",
             parameters: { type: "object", properties: { url: { type: "string" } }, required: ["url"], additionalProperties: false },
-        }, "network", async (args) => {
+        }, "network", async (args, signal) => {
             let url = await validatePublicUrl(text(args, "url"));
             for (let redirects = 0; redirects <= 5; redirects++) {
-                const response = await fetch(url, { redirect: "manual", headers: { "User-Agent": "forge-cli/0.2" } });
+                const response = await fetch(url, { redirect: "manual", signal, headers: { "User-Agent": "forge-cli/0.3" } });
                 if (response.status >= 300 && response.status < 400) {
                     const location = response.headers.get("location");
                     if (!location)

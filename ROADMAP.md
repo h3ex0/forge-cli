@@ -17,17 +17,28 @@ Forge is evolving into a local-first, provider-independent terminal agent that c
 - Enhanced slash-command REPL, persistent history, pinned context, project instructions, and full-screen streamed chat.
 - Git inspection, project detection, approved test/build execution, versioned sessions, and automated tests.
 
-## v0.3 — Reliability and recovery
+## Shipped in v0.3 — TUI-first workspace
 
-- Abort active streams and child processes cleanly with Ctrl+C.
+- TUI is the default for supported interactive terminals, with inline fallback for pipes and small terminals.
+- Shared `AgentSession` powers TUI and inline tool execution, permissions, messages, usage, and cancellation.
+- Responsive conversation, activity, and context panes.
+- Searchable command, model, file-context, and session overlays.
+- Multiline composer, scrollback, prompt queue, visible tool activity, and blocking approval dialogs.
+- Model/tool terminal-control sanitization and recovery checkpoints before approved high-impact work.
+- Prompt, completion, total, and estimated context token status.
+- Estimated session cost, cumulative per-profile token ledgers, configured plan ceilings, and provider-reported token/request rate limits.
+- Config schema v3, TUI autosave, richer themes, and `NO_COLOR` behavior.
+
+## v0.4 — Reliability and recovery
+
 - Add bounded provider retries with jitter and useful error classification.
-- Add autosave, crash recovery, session export formats, and session deletion.
+- Add full filesystem undo journals, richer crash recovery, session export formats, and session deletion.
 - Add context-window accounting, compaction, and visible truncation warnings.
 - Add per-turn token, cost, time, and tool-iteration budgets.
 - Add redacted structured audit records with retention controls.
 - Add backup and undo journals for workspace mutations.
 
-## v0.4 — Developer workflow
+## v0.5 — Developer workflow
 
 - Add unified patch application with diff previews.
 - Add safe move/delete operations with recoverable behavior.
@@ -36,15 +47,15 @@ Forge is evolving into a local-first, provider-independent terminal agent that c
 - Add tool result caching and bounded parallel read-only tools.
 - Expand machine-readable output across model, session, config, and doctor commands.
 
-## v0.5 — Smart local routing
+## v0.6 — Smart local routing
 
 - Route tasks using health, capabilities, context size, latency, and user policy.
 - Prefer capable local models; disclose and approve escalation to cloud providers.
 - Add aliases, fallback chains, unload/remove operations, and disk-usage reporting.
 - Improve capability detection for Qwen and other model families across runtimes.
-- Turn the full-screen UI into a workspace with model, context, tool, diff, and approval panes.
+- Add dedicated Git diff, diagnostics, plan, and provider-settings panes to the full-screen workspace.
 
-## v0.6 — Extensibility
+## v0.7 — Extensibility
 
 - Add MCP client support behind the same capability-policy boundary.
 - Add versioned plugin manifests with explicit requested capabilities.

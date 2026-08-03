@@ -16,6 +16,9 @@ Forge is pre-1.0 software. Security fixes are applied to the latest version on t
 - Network fetches accept only HTTP(S), reject URL credentials, resolve DNS, and block loopback, private, link-local, and cloud-metadata-style destinations, including redirects.
 - Remote provider keys use the OS credential manager when available, with profile-specific environment variables as a headless fallback.
 - File writes are atomic, tool output is capped, and an agent turn is limited to ten tool iterations.
+- Model and tool text is stripped of terminal control sequences before the TUI renders it.
+- The TUI uses blocking approval overlays and records a recovery session before approved write, process, or shell operations.
+- Active provider streams and structured tool processes receive cancellation signals.
 - Offline mode removes network tools and prevents one-shot use of a remote profile.
 - Forge only stops local runtime processes that it recorded as Forge-owned.
 
@@ -35,7 +38,8 @@ Forge is pre-1.0 software. Security fixes are applied to the latest version on t
 - User-approved processes inherit the user's ambient filesystem and network permissions.
 - The shell compatibility tool accepts a command string and therefore carries shell parsing and injection risk.
 - There is not yet a durable, redacted audit log or automatic backup/undo journal for every mutation.
-- Provider retries, active-operation cancellation, and context compaction are not yet comprehensive.
+- Provider retries and context compaction are not yet comprehensive; some third-party child processes may take time to honor cancellation.
+- TUI recovery checkpoints preserve conversation state, not filesystem contents; they are not a substitute for Git or backups.
 - Third-party local runtimes and downloaded model files have their own supply-chain and license risks.
 - `/key` is retained for compatibility but can expose a secret through visible terminal history; prefer the OS credential store or environment variables.
 - A model can still be influenced by prompt injection. Policy gates reduce impact but cannot establish the intent or trustworthiness of model output.

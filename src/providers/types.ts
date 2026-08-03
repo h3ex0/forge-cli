@@ -18,10 +18,24 @@ export interface ToolDef {
   parameters: Record<string, unknown>; // JSON schema
 }
 
+export interface ProviderRateLimits {
+  tokenLimit?: number;
+  tokenRemaining?: number;
+  requestLimit?: number;
+  requestRemaining?: number;
+  reset?: string;
+}
+
+export interface StreamUsage {
+  promptTokens?: number;
+  completionTokens?: number;
+  rateLimits?: ProviderRateLimits;
+}
+
 export interface StreamCallbacks {
   onTextDelta: (delta: string) => void;
   onToolCallsComplete: (calls: ToolCall[]) => void;
-  onDone: (usage?: { promptTokens?: number; completionTokens?: number }) => void;
+  onDone: (usage?: StreamUsage) => void;
   onError: (err: Error) => void;
 }
 
@@ -30,6 +44,7 @@ export interface ChatDriver {
     messages: ChatMessage[],
     tools: ToolDef[],
     model: string,
-    callbacks: StreamCallbacks
+    callbacks: StreamCallbacks,
+    signal?: AbortSignal,
   ): Promise<void>;
 }

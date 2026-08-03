@@ -5,6 +5,7 @@ import readline from "node:readline";
 import { z } from "zod";
 import { colors, printOk, printSystem } from "./ui.js";
 import { loadProfileSecret, storeProfileSecret } from "./security/secrets.js";
+import { clearProfileUsage } from "./usage-store.js";
 const CONFIG_DIR = path.join(os.homedir(), ".forge");
 export const CONFIG_PATH = path.join(CONFIG_DIR, "config.json");
 export const SESSIONS_DIR = path.join(CONFIG_DIR, "sessions");
@@ -15,9 +16,15 @@ const profileSchema = z.object({
     model: z.string().min(1),
     kind: z.enum(["remote", "local"]).default("remote"),
     runtime: z.enum(["ollama", "lmstudio", "llamacpp", "openai-compatible"]).optional(),
+    subscription: z.object({
+        name: z.string().min(1).max(80).optional(),
+        tokenLimit: z.number().int().positive().optional(),
+        costLimitUsd: z.number().positive().optional(),
+        resetAt: z.string().datetime({ offset: true }).optional(),
+    }).optional(),
 });
 const configSchema = z.object({
-    schemaVersion: z.literal(2),
+    schemaVersion: z.literal(3),
     activeProfile: z.string(),
     profiles: z.record(z.string(), profileSchema),
     permissions: z.object({
@@ -33,12 +40,12 @@ const configSchema = z.object({
     runtimes: z.record(z.enum(["ollama", "lmstudio", "llamacpp", "openai-compatible"]), z.object({ baseURL: z.string(), executable: z.string().optional(), modelRoots: z.array(z.string()).optional() })),
 });
 export const DEFAULT_CONFIG = {
-    schemaVersion: 2,
+    schemaVersion: 3,
     activeProfile: "",
     profiles: {},
     permissions: { mode: "balanced", workspaceRoot: process.cwd() },
     routing: { mode: "manual", offline: false, askBeforeCloud: true },
-    ui: { mode: "inline", theme: "flame" },
+    ui: { mode: "tui", theme: "flame" },
     runtimes: {
         ollama: { baseURL: "http://127.0.0.1:11434/v1", executable: "ollama" },
         lmstudio: { baseURL: "http://127.0.0.1:1234/v1", executable: "lms" },
@@ -50,8 +57,11 @@ export function migrateConfig(raw) {
     if (!raw || typeof raw !== "object")
         return structuredClone(DEFAULT_CONFIG);
     const candidate = raw;
-    if (candidate.schemaVersion === 2)
+    if (candidate.schemaVersion === 3)
         return configSchema.parse(candidate);
+    if (candidate.schemaVersion === 2) {
+        return configSchema.parse({ ...candidate, schemaVersion: 3, ui: { ...(candidate.ui ?? {}), mode: "tui" } });
+    }
     const legacyProfiles = (candidate.profiles && typeof candidate.profiles === "object" ? candidate.profiles : {});
     const profiles = {};
     for (const [name, value] of Object.entries(legacyProfiles)) {
@@ -71,18 +81,26 @@ export function configExists() {
 export function loadConfig() {
     const raw = fs.readFileSync(CONFIG_PATH, "utf-8");
     const config = migrateConfig(JSON.parse(raw));
-    let migratedSecret = false;
+    let shouldSave = false;
     for (const [name, profile] of Object.entries(config.profiles)) {
+        if (profile.subscription?.resetAt && Date.parse(profile.subscription.resetAt) <= Date.now()) {
+            try {
+                clearProfileUsage(name);
+            }
+            catch { /* usage reset must not block startup */ }
+            delete profile.subscription.resetAt;
+            shouldSave = true;
+        }
         if (profile.kind !== "remote")
             continue;
         if (profile.apiKey) {
-            migratedSecret = storeProfileSecret(name, profile.apiKey) || migratedSecret;
+            shouldSave = storeProfileSecret(name, profile.apiKey) || shouldSave;
         }
         else {
             profile.apiKey = loadProfileSecret(name);
         }
     }
-    if (migratedSecret)
+    if (shouldSave)
         saveConfig(config);
     return config;
 }

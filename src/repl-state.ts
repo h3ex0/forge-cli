@@ -4,6 +4,7 @@ import type { ChatMessage } from "./providers/types.js";
 import { colors } from "./ui.js";
 import type { LineSource } from "./line-source.js";
 import type { ModelInfo } from "./providers/models.js";
+import type { ProviderRateLimits } from "./providers/types.js";
 import fs from "node:fs";
 import path from "node:path";
 import { loadProjectInstructions } from "./project.js";
@@ -18,7 +19,7 @@ export class AppState {
   cfg: ForgeConfig;
   messages: ChatMessage[];
   reader: LineSource;
-  usage = { promptTokens: 0, completionTokens: 0 };
+  usage: { promptTokens: number; completionTokens: number; rateLimits?: ProviderRateLimits } = { promptTokens: 0, completionTokens: 0 };
   pricingCache = new Map<string, ModelInfo>();
   contextFiles = new Map<string, string>();
   projectInstructions: Array<{ file: string; content: string }>;

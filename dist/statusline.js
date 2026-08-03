@@ -1,26 +1,23 @@
 import chalk from "chalk";
-function fmtNum(n) {
-    return n.toLocaleString("en-US");
-}
-function fmtCost(n) {
-    if (n < 0.01)
-        return "<$0.01";
-    return `$${n.toFixed(2)}`;
-}
+import { estimateCost, estimateMessageTokens, renderUsageStatus } from "./usage.js";
+import { loadUsageLedger } from "./usage-store.js";
+import { sanitizeTerminalText } from "./tui/sanitize.js";
 export function renderStatusLine(state) {
     const profile = state.cfg.profiles[state.cfg.activeProfile];
     const parts = [];
-    parts.push(chalk.bgMagenta.black(` ${state.cfg.activeProfile} `));
-    parts.push(chalk.bgBlue.black(` ${profile.model} `));
-    const { promptTokens, completionTokens } = state.usage;
-    const tokenPart = `↑${fmtNum(promptTokens)} ↓${fmtNum(completionTokens)}`;
-    parts.push(chalk.bgBlackBright.white(` ${tokenPart} `));
+    parts.push(chalk.bgMagenta.black(` ${sanitizeTerminalText(state.cfg.activeProfile)} `));
+    parts.push(chalk.bgBlue.black(` ${sanitizeTerminalText(profile.model)} `));
     const pricing = state.pricingCache.get(`${state.cfg.activeProfile}:${profile.model}`);
-    if (pricing && (pricing.inputPricePerMillion || pricing.outputPricePerMillion)) {
-        const cost = (promptTokens / 1_000_000) * (pricing.inputPricePerMillion ?? 0) +
-            (completionTokens / 1_000_000) * (pricing.outputPricePerMillion ?? 0);
-        parts.push(chalk.bgGreen.black(` est. ${fmtCost(cost)} `));
-    }
+    const detailed = renderUsageStatus(state.cfg, {
+        ...state.usage,
+        contextTokens: estimateMessageTokens(state.modelMessages()),
+        estimatedCostUsd: estimateCost(profile, state.usage, pricing),
+        subscriptionTokensUsed: (() => {
+            const entry = loadUsageLedger().profiles[state.cfg.activeProfile];
+            return entry ? entry.promptTokens + entry.completionTokens : 0;
+        })(),
+    }, process.stdout.columns ?? 160);
+    parts.push(chalk.dim(sanitizeTerminalText(detailed)));
     return parts.join(" ");
 }
 export function printStatusLine(state) {

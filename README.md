@@ -4,12 +4,12 @@
 
 ### One terminal agent for cloud APIs and local open-source models.
 
-Forge is a local-first AI coding CLI with streaming chat, workspace-scoped tools, persistent sessions, permission modes, and first-class support for Ollama, LM Studio, llama.cpp, and OpenAI-compatible runtimes.
+Forge is a local-first AI coding CLI with a TUI-first workspace, streaming chat, workspace-scoped tools, persistent sessions, permission modes, and first-class support for Ollama, LM Studio, llama.cpp, and OpenAI-compatible runtimes.
 
 ![Node.js](https://img.shields.io/badge/Node.js-%3E%3D22-339933?logo=node.js&logoColor=white)
 ![TypeScript](https://img.shields.io/badge/TypeScript-5.x-3178C6?logo=typescript&logoColor=white)
 ![Local models](https://img.shields.io/badge/local-Ollama%20%7C%20LM%20Studio%20%7C%20llama.cpp-7C3AED)
-![Version](https://img.shields.io/badge/version-0.2.0-orange)
+![Version](https://img.shields.io/badge/version-0.3.0-orange)
 
 </div>
 
@@ -40,7 +40,7 @@ npm link
 forge
 ```
 
-The first interactive launch opens the provider setup wizard. For development without a global link:
+The first interactive launch opens the provider setup wizard, then Forge starts its full-screen workspace. For development without a global link:
 
 ```bash
 npm start
@@ -91,17 +91,61 @@ Forge only stops runtime processes it previously started.
 ## Interfaces
 
 ```bash
-forge                         # interactive REPL
+forge                         # default full-screen TUI in a supported terminal
 forge chat                    # force the enhanced inline REPL
-forge tui                     # full-screen streamed chat
+forge tui                     # explicitly open the full-screen workspace
 forge run "Summarize package.json"
 forge run "Return a release summary" --json
 forge run "Work offline" --model ollama:qwen3 --offline
 forge doctor --json
+forge limit show
 forge completion powershell
 ```
 
-The inline REPL has persistent command history, Up/Down navigation, Tab completion, quoted slash-command arguments, and multiline paste support. The TUI provides a focused full-screen chat; use the inline REPL for the complete slash-command and tool workflow.
+When input or output is redirected, or the terminal is too small for a safe full-screen layout, plain `forge` falls back to inline mode. This keeps pipes and automation stable.
+
+## Full-screen workspace
+
+The TUI and inline REPL share the same agent engine, tool loop, permission decisions, messages, usage accounting, and cancellation behavior. The responsive layout shows conversation, tool activity, project context, the active model, and session state without taking focus away from the composer.
+
+| Shortcut | Action |
+| --- | --- |
+| `Ctrl+K` | Search commands |
+| `Ctrl+P` | Search workspace files and pin context |
+| `Ctrl+M` | Switch cloud profiles or local models |
+| `Ctrl+S` | Browse saved and automatic sessions |
+| `Page Up` / `Page Down` | Scroll conversation history |
+| `Ctrl+J` | Insert a newline in the composer |
+| `Esc` | Close an overlay or cancel the active turn |
+| `Ctrl+C` | Cancel active work; exit when idle |
+| `?` | Open help from an empty composer |
+
+Commands, model names, files, and sessions are searchable inside their overlays. Prompts typed while Forge is working are queued for the next turn. The TUI autosaves conversations as `autosave` and records `recovery-latest` before approved write/process operations.
+
+The inline REPL remains available for classic command output and provider-creation prompts. It includes persistent history, Up/Down navigation, Tab completion, quoted slash-command arguments, and multiline paste support.
+
+## Tokens, cost, and subscription limits
+
+The bottom status line continuously displays prompt, completion, total, and estimated context tokens. Estimated cost appears when model pricing is known.
+
+OpenAI-compatible and Anthropic providers can expose request/token rate limits in response headers. Forge displays those automatically when present. Most providers do not expose account billing subscriptions through chat APIs, so you can configure a local plan label and ceiling:
+
+```bash
+forge limit set --name Pro --tokens 1000000 --cost 20 --reset 2026-09-01T00:00:00Z
+forge limit show
+forge limit reset-usage
+forge limit clear
+```
+
+Inside Forge:
+
+```text
+/limit set 1000000 20 Pro
+/limit show
+/limit clear
+```
+
+Forge keeps a protected local cumulative token ledger per profile and compares it with the configured plan ceiling. `--reset` clears that counter once the specified time arrives; `reset-usage` clears it immediately. Cost is estimated for the current session when pricing is known. These are informational guardrails, not authoritative provider billing data. Forge marks the status line when a configured ceiling is reached.
 
 ## Slash commands
 
@@ -112,7 +156,7 @@ The inline REPL has persistent command history, Up/Down navigation, Tab completi
 | Safety and routing | `/mode read-only\|balanced\|autonomous`, `/route manual\|auto`, `/offline on\|off`, `/workspace [path]` |
 | Project context | `/instructions`, `/tree`, `/index`, `/context list\|add\|drop\|clear` |
 | Developer workflow | `/diff`, `/git status\|diff\|log`, `/test [script]`, `/build`, `/review`, `/plan`, `/fix` |
-| Sessions and UI | `/new`, `/history`, `/save`, `/checkpoint`, `/load`, `/sessions`, `/cost`, `/status`, `/doctor`, `/tools`, `/ui`, `/theme` |
+| Sessions and UI | `/new`, `/history`, `/save`, `/checkpoint`, `/load`, `/sessions`, `/cost`, `/limit`, `/status`, `/doctor`, `/tools`, `/ui`, `/theme` |
 
 Run `/help` for the authoritative command list.
 
@@ -132,7 +176,7 @@ Offline mode removes network tools and refuses cloud-backed one-shot prompts.
 
 ## Configuration and credentials
 
-Forge uses a versioned configuration at `~/.forge/config.json`. Existing v1 configurations migrate automatically. Remote API keys are stored through the operating-system credential manager when available; headless environments can use:
+Forge uses a versioned configuration at `~/.forge/config.json`. Existing configurations migrate automatically to schema v3 and the TUI-first default. Use `/ui inline` or `forge chat` to retain the classic experience. Remote API keys are stored through the operating-system credential manager when available; headless environments can use:
 
 ```text
 FORGE_API_KEY_<PROFILE_NAME>
@@ -166,7 +210,7 @@ npm run verify
 
 ```mermaid
 flowchart LR
-    U["REPL / TUI / one-shot CLI"] --> C["Agent core"]
+    U["TUI / REPL / one-shot CLI"] --> C["Shared AgentSession"]
     C --> R["Provider and runtime registry"]
     R --> L["Ollama / LM Studio / llama.cpp"]
     R --> P["OpenAI-compatible / Anthropic / Gemini"]
