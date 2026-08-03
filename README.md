@@ -52,7 +52,7 @@ Forge gives you one terminal workflow across multiple AI providers without locki
 ### Install from source
 
 ```bash
-git clone https://github.com/egdevil1997/forge-cli.git
+git clone https://github.com/h3ex0/forge-cli.git
 cd forge-cli
 npm install
 npm run build
