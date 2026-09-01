@@ -121,10 +121,22 @@ function KeyEntryModal({ dimensions, name, mode, draft, theme }) {
     return _jsxs(Frame, { dimensions: dimensions, title: mode === "add" ? `NEW PROVIDER · ${name}` : `UPDATE KEY · ${name}`, titleColor: theme.accent, footer: "Enter to save \u00B7 Esc to cancel", children: [_jsx(Text, { color: theme.muted, wrap: "wrap", children: "Paste or type the API key. It is masked here and never added to composer history." }), _jsx(Text, { children: " " }), _jsxs(Text, { color: theme.text, children: ["•".repeat(draft.length), "\u2588"] })] });
 }
 /** Render Forge's responsive, keyboard-first full-screen terminal workspace. */
+// Never render to the terminal's literal last column. Many terminal
+// emulators implement "pending wrap": writing a cell in the final column
+// doesn't wrap until the *next* character arrives, leaving the cursor in an
+// ambiguous state until then. Ink and the terminal can disagree about
+// exactly where the cursor is while that's pending, especially across the
+// rapid, repeated cursor-repositioning escape sequences a redraw-heavy
+// full-screen app produces — a documented category of cross-terminal
+// desync. Forge's boxes are sized to the full reported width, so this
+// reserves one column as a safety margin against that class of bug.
+function readTerminalSize(stdout) {
+    return { columns: Math.max(40, (stdout.columns ?? 121) - 1), rows: stdout.rows ?? 30 };
+}
 export function ForgeTui({ config }) {
     const { exit } = useApp();
     const { stdout } = useStdout();
-    const [dimensions, setDimensions] = React.useState({ columns: stdout.columns ?? 120, rows: stdout.rows ?? 30 });
+    const [dimensions, setDimensions] = React.useState(() => readTerminalSize(stdout));
     const [input, setInput] = React.useState("");
     const [cursor, setCursor] = React.useState(0);
     const [busy, setBusy] = React.useState(false);
@@ -213,7 +225,7 @@ export function ForgeTui({ config }) {
         setTimeout(() => { void session.send(queued); }, 0);
     }, [session]);
     React.useEffect(() => {
-        const resize = () => setDimensions({ columns: stdout.columns ?? 120, rows: stdout.rows ?? 30 });
+        const resize = () => setDimensions(readTerminalSize(stdout));
         stdout.on("resize", resize);
         return () => { stdout.off("resize", resize); };
     }, [stdout]);
