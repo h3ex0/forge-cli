@@ -98,18 +98,24 @@ Forge only stops runtime processes it previously started.
 ## Interfaces
 
 ```bash
-forge                         # default full-screen TUI in a supported terminal
-forge chat                    # force the enhanced inline REPL
-forge tui                     # explicitly open the full-screen workspace
+forge                         # full-screen TUI workspace (default)
+forge chat                    # same workspace, explicit alias
+forge tui                     # same workspace, explicit alias
 forge run "Summarize package.json"
 forge run "Return a release summary" --json
 forge run "Work offline" --model ollama:qwen3 --offline
+forge provider list
+forge provider add myapi https://api.example.com/v1 gpt-4o-mini --format openai
+forge provider use myapi
+forge key set myapi
 forge doctor --json
 forge limit show
 forge completion powershell
 ```
 
-When input or output is redirected, or the terminal is too small for a safe full-screen layout, plain `forge` falls back to inline mode. This keeps pipes and automation stable.
+`forge provider add` and `forge key set` prompt for the API key with the input hidden if you omit `--key`; pass `--key` only in non-interactive contexts (CI, scripts) where shell history exposure is an accepted tradeoff. The same operations are also available inside the TUI as `/provider add` and `/key`, which capture the key in a masked modal.
+
+The full-screen workspace needs a real terminal at least 72x18. When input or output is redirected, or the terminal is too small, use `forge run "<prompt>"` for non-interactive/scripted use instead.
 
 ## Full-screen workspace
 

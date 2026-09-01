@@ -1,13 +1,14 @@
 import fs from "node:fs";
 import { Command } from "commander";
 import { printError, printOk, printSystem } from "./ui.js";
-import { configExists, loadConfig, runSetupWizard, saveConfig } from "./config.js";
+import { configExists, DEFAULT_CONFIG, loadConfig, readMaskedLine, runSetupWizard, saveConfig } from "./config.js";
 import { createDriver } from "./providers/index.js";
 import { activateLocalModel, inspectLocalModel, listRuntimeSummaries, pullLocalModel } from "./runtime/service.js";
 import { startRuntime, stopOwnedRuntime } from "./runtime/process.js";
 import { listSessions, loadSession } from "./session.js";
 import { VERSION } from "./version.js";
 import { clearProfileUsage, loadUsageLedger } from "./usage-store.js";
+import { deleteProfileSecret } from "./security/secrets.js";
 function requireConfig() {
     if (!configExists())
         throw new Error("Forge is not configured. Run `forge chat` once to start setup.");
@@ -81,10 +82,10 @@ function printRuntimeSummaries(summaries, json) {
 function addCompletionCommand(program) {
     program.command("completion <shell>").description("Generate shell completion setup").action((shell) => {
         const scripts = {
-            powershell: "Register-ArgumentCompleter -Native -CommandName forge -ScriptBlock { param($wordToComplete) 'chat','tui','run','model','runtime','session','limit','doctor','completion' | Where-Object { $_ -like \"$wordToComplete*\" } | ForEach-Object { [System.Management.Automation.CompletionResult]::new($_,$_, 'ParameterValue', $_) } }",
-            bash: "complete -W 'chat tui run model runtime session limit doctor completion' forge",
-            zsh: "compdef '_arguments \"1:command:(chat tui run model runtime session limit doctor completion)\"' forge",
-            fish: "complete -c forge -f -a 'chat tui run model runtime session limit doctor completion'",
+            powershell: "Register-ArgumentCompleter -Native -CommandName forge -ScriptBlock { param($wordToComplete) 'chat','tui','run','model','provider','key','runtime','session','limit','doctor','completion' | Where-Object { $_ -like \"$wordToComplete*\" } | ForEach-Object { [System.Management.Automation.CompletionResult]::new($_,$_, 'ParameterValue', $_) } }",
+            bash: "complete -W 'chat tui run model provider key runtime session limit doctor completion' forge",
+            zsh: "compdef '_arguments \"1:command:(chat tui run model provider key runtime session limit doctor completion)\"' forge",
+            fish: "complete -c forge -f -a 'chat tui run model provider key runtime session limit doctor completion'",
         };
         const script = scripts[shell];
         if (!script)
@@ -127,6 +128,72 @@ export function createProgram() {
         }
         process.stderr.write("\n");
         printOk(`Downloaded ${reference}.`);
+    });
+    const provider = program.command("provider").description("Manage remote provider profiles");
+    provider.command("list").option("--json").action((options) => {
+        const config = requireConfig();
+        const rows = Object.entries(config.profiles).map(([name, item]) => ({ name, active: name === config.activeProfile, model: item.model, kind: item.kind }));
+        if (options.json)
+            console.log(JSON.stringify(rows));
+        else if (!rows.length)
+            console.log("No providers configured. Run `forge provider add`.");
+        else
+            for (const row of rows)
+                console.log(`${row.active ? "*" : " "} ${row.name}: ${row.model} (${row.kind})`);
+    });
+    provider.command("use <name>").action((name) => {
+        const config = requireConfig();
+        if (!config.profiles[name])
+            throw new Error(`Unknown profile "${name}". Run \`forge provider list\`.`);
+        config.activeProfile = name;
+        saveConfig(config);
+        printOk(`Using provider ${name}.`);
+    });
+    provider.command("add <name> <base-url> <model>")
+        .description("Add a remote provider profile")
+        .option("--format <format>", "openai, anthropic, or gemini", "openai")
+        .option("--key <key>", "API key (omit to enter it hidden)")
+        .action(async (name, baseURL, model, options) => {
+        if (!/^https?:\/\//i.test(baseURL))
+            throw new Error("Base URL must start with http:// or https://.");
+        const knownFormats = ["openai", "anthropic", "gemini"];
+        if (!knownFormats.includes(options.format))
+            throw new Error("--format must be openai, anthropic, or gemini.");
+        const config = configExists() ? loadConfig() : structuredClone(DEFAULT_CONFIG);
+        if (config.profiles[name])
+            throw new Error(`Profile "${name}" already exists. Use \`forge key set ${name}\` to change its key.`);
+        const key = options.key ?? await readMaskedLine(`API key for ${name}: `);
+        if (!key)
+            throw new Error("An API key is required.");
+        config.profiles[name] = { baseURL, apiKey: key, format: options.format, model, kind: "remote" };
+        const activated = !config.activeProfile;
+        if (activated)
+            config.activeProfile = name;
+        saveConfig(config);
+        printOk(`Provider "${name}" added${activated ? " and set active" : ""}.`);
+    });
+    provider.command("remove <name>").description("Remove a provider profile and its stored key").action((name) => {
+        const config = requireConfig();
+        if (!config.profiles[name])
+            throw new Error(`Unknown profile "${name}".`);
+        if (config.activeProfile === name)
+            throw new Error("Cannot remove the active profile. Switch first with `forge provider use <other>`.");
+        delete config.profiles[name];
+        deleteProfileSecret(name);
+        saveConfig(config);
+        printOk(`Removed provider "${name}".`);
+    });
+    const key = program.command("key").description("Update a provider's stored API key");
+    key.command("set <profile>").option("--key <key>", "API key (omit to enter it hidden)").action(async (profileName, options) => {
+        const config = requireConfig();
+        if (!config.profiles[profileName])
+            throw new Error(`Unknown profile "${profileName}". Run \`forge provider list\`.`);
+        const value = options.key ?? await readMaskedLine(`API key for ${profileName}: `);
+        if (!value)
+            throw new Error("An API key is required.");
+        config.profiles[profileName].apiKey = value;
+        saveConfig(config);
+        printOk(`API key updated for "${profileName}".`);
     });
     const runtime = program.command("runtime").description("Inspect local model runtimes");
     runtime.command("list").option("--json").action(async (options) => printRuntimeSummaries(await listRuntimeSummaries(requireConfig()), Boolean(options.json)));

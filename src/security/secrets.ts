@@ -25,3 +25,11 @@ export function loadProfileSecret(profileName: string): string {
     return "";
   }
 }
+
+export function deleteProfileSecret(profileName: string): void {
+  try {
+    new Entry(SERVICE, profileName).deletePassword();
+  } catch {
+    // nothing stored for this profile — deleting a removed profile is a no-op
+  }
+}

@@ -4,7 +4,7 @@ import { createProgram, shouldLaunchTui } from "../src/cli.js";
 describe("top-level CLI", () => {
   it("exposes interactive, automation, model, runtime, and diagnostics commands", () => {
     const names = createProgram().commands.map((command) => command.name());
-    expect(names).toEqual(expect.arrayContaining(["chat", "tui", "run", "model", "runtime", "session", "limit", "doctor", "completion"]));
+    expect(names).toEqual(expect.arrayContaining(["chat", "tui", "run", "model", "provider", "key", "runtime", "session", "limit", "doctor", "completion"]));
   });
 
   it("reports the v0.3 release", () => {

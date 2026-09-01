@@ -6,7 +6,7 @@ import { z } from "zod";
 import { colors, printOk, printSystem, printWarn } from "./ui.js";
 import { loadProfileSecret, storeProfileSecret } from "./security/secrets.js";
 import { clearProfileUsage } from "./usage-store.js";
-const CONFIG_DIR = path.join(os.homedir(), ".forge");
+const CONFIG_DIR = process.env.FORGE_HOME ? path.resolve(process.env.FORGE_HOME) : path.join(os.homedir(), ".forge");
 export const CONFIG_PATH = path.join(CONFIG_DIR, "config.json");
 export const SESSIONS_DIR = path.join(CONFIG_DIR, "sessions");
 const profileSchema = z.object({
@@ -142,6 +142,53 @@ export function saveConfig(cfg) {
 }
 function ask(rl, question) {
     return new Promise((resolve) => rl.question(question, (answer) => resolve(answer.trim())));
+}
+/**
+ * Prompt for a line of input without echoing it, for use on the plain CLI
+ * (outside the TUI's own masked modal). Falls back to a plain, unmasked
+ * readline prompt when stdin isn't a TTY (piped input, CI).
+ */
+export function readMaskedLine(promptText) {
+    const { stdin, stdout } = process;
+    if (!stdin.isTTY) {
+        const rl = readline.createInterface({ input: stdin, output: stdout });
+        return new Promise((resolve) => rl.question(promptText, (answer) => { rl.close(); resolve(answer.trim()); }));
+    }
+    return new Promise((resolve, reject) => {
+        stdout.write(promptText);
+        stdin.setRawMode(true);
+        stdin.resume();
+        stdin.setEncoding("utf-8");
+        let value = "";
+        const finish = (result) => {
+            stdin.setRawMode(false);
+            stdin.pause();
+            stdin.removeListener("data", onData);
+            stdout.write("\n");
+            if (result === "resolve")
+                resolve(value.trim());
+            else
+                reject(new Error("Cancelled."));
+        };
+        const onData = (chunk) => {
+            for (const char of chunk) {
+                if (char === "\r" || char === "\n")
+                    return finish("resolve");
+                if (char === "\u0003")
+                    return finish("reject");
+                if (char === "\u007f" || char === "\b") {
+                    if (value.length) {
+                        value = value.slice(0, -1);
+                        stdout.write("\b \b");
+                    }
+                    continue;
+                }
+                value += char;
+                stdout.write("*");
+            }
+        };
+        stdin.on("data", onData);
+    });
 }
 const PRESETS = {
     "signor": { baseURL: "https://api.code.signor.ai/v1", format: "openai", defaultModel: "gpt-5-mini" },
