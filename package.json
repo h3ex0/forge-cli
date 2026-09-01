@@ -1,8 +1,10 @@
 {
-  "name": "forge-cli",
+  "name": "@h3ex0/forge-cli",
   "version": "0.5.2",
   "description": "A local-first AI coding agent for cloud APIs and open-source models through Ollama, LM Studio, and llama.cpp.",
   "type": "module",
+  "license": "MIT",
+  "author": "h3ex0",
   "bin": {
     "forge": "./bin/forge.js"
   },
@@ -14,13 +16,17 @@
   "bugs": {
     "url": "https://github.com/h3ex0/forge-cli/issues"
   },
+  "publishConfig": {
+    "access": "public"
+  },
   "files": [
     "bin",
     "dist",
     "docs/adr",
     "README.md",
     "ROADMAP.md",
-    "SECURITY.md"
+    "SECURITY.md",
+    "LICENSE"
   ],
   "keywords": [
     "ai",

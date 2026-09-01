@@ -32,6 +32,13 @@ Forge is a local-first AI coding CLI with a TUI-first workspace, streaming chat,
 Requirements: Node.js 22 or newer and npm.
 
 ```bash
+npm install -g @h3ex0/forge-cli
+forge
+```
+
+Or build from source:
+
+```bash
 git clone https://github.com/h3ex0/forge-cli.git
 cd forge-cli
 npm install
