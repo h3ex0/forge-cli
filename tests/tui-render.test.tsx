@@ -87,6 +87,36 @@ describe("Forge TUI rendering", () => {
     expect(output).not.toContain(hugePaste);
   });
 
+  it("assembles a bracketed paste delivered in many small chunks into a single placeholder", async () => {
+    const stdout = new PassThrough() as unknown as NodeJS.WriteStream;
+    const stderr = new PassThrough() as unknown as NodeJS.WriteStream;
+    const stdin = new PassThrough() as unknown as NodeJS.ReadStream;
+    Object.assign(stdout, { columns: 120, rows: 30, isTTY: false });
+    Object.assign(stdin, { isTTY: true, setRawMode: vi.fn(), ref: vi.fn(), unref: vi.fn() });
+    let output = "";
+    stdout.on("data", (chunk) => { output += chunk.toString(); });
+    const config = migrateConfig({ activeProfile: "test", profiles: { test: { baseURL: "https://example.test", apiKey: "", format: "openai", model: "qwen" } } });
+
+    const instance = render(React.createElement(ForgeTui, { config }), { stdout, stderr, stdin, interactive: false, patchConsole: false });
+    await instance.waitUntilRenderFlush();
+    output = "";
+    // A large real-terminal paste (e.g. Windows Terminal + Ctrl+V) commonly
+    // arrives as many separate small stdin chunks rather than one atomic
+    // write. Without bracketed-paste assembly this used to fire a separate
+    // synchronous re-render per chunk instead of one for the whole paste.
+    const content = "y".repeat(5000);
+    stdin.write("\x1b[200~");
+    for (let index = 0; index < content.length; index += 200) stdin.write(content.slice(index, index + 200));
+    stdin.write("\x1b[201~");
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    instance.unmount();
+    await instance.waitUntilExit();
+
+    expect(output).toContain("[Pasted 5,000 chars, 1 line #1]");
+    expect(output).not.toContain("#2");
+    expect(output).not.toContain(content);
+  });
+
   it("expands paste placeholders back to their full content before sending", () => {
     const blocks = new Map<string, string>();
     const content = "line one\nline two\nline three";

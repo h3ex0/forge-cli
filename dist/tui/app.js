@@ -3,7 +3,7 @@ import React from "react";
 import path from "node:path";
 import fs from "node:fs";
 import fg from "fast-glob";
-import { Box, Text, measureElement, useApp, useInput, useStdout } from "ink";
+import { Box, Text, measureElement, useApp, useInput, usePaste, useStdout } from "ink";
 import { saveConfig } from "../config.js";
 import { AgentSession } from "../agent/session.js";
 import { createTools } from "../tools/index.js";
@@ -699,6 +699,34 @@ export function ForgeTui({ config }) {
         setReaderOffset(0);
         setRevision((value) => value + 1);
     }, [activities, busy, config, focus, input, notice, selectedActivity, streamText]);
+    // Shared by useInput's fallback branch and usePaste below: route pasted
+    // text to whichever surface is actually active, and collapse a large
+    // composer paste to a placeholder so it never has to be rendered inline.
+    const insertPastedText = React.useCallback((text) => {
+        if (reader || approval)
+            return;
+        if (keyEntry) {
+            setKeyEntry((current) => current && { ...current, draft: current.draft + text });
+            return;
+        }
+        if (overlay) {
+            setOverlayQuery((value) => value + text);
+            setSelected(0);
+            return;
+        }
+        if (text.length > PASTE_COLLAPSE_THRESHOLD) {
+            const content = text.length > MAX_PASTE_CHARS ? `${text.slice(0, MAX_PASTE_CHARS)}\n[…truncated, pasted content exceeded ${MAX_PASTE_CHARS.toLocaleString("en-US")} characters]` : text;
+            const token = pastePlaceholder(++pasteCounterRef.current, content);
+            pastedBlocksRef.current.set(token, content);
+            setInput((value) => value.slice(0, cursor) + token + value.slice(cursor));
+            setCursor((value) => value + token.length);
+            setNotice(`Pasted ${content.length.toLocaleString("en-US")} characters — kept as a placeholder so the composer stays responsive.`);
+            setRevision((value) => value + 1);
+            return;
+        }
+        setInput((value) => value.slice(0, cursor) + text + value.slice(cursor));
+        setCursor((value) => value + text.length);
+    }, [reader, approval, keyEntry, overlay, cursor]);
     useInput((character, key) => {
         if (reader) {
             const readerLines = wrapReaderText(reader.content, dimensions.columns);
@@ -1023,20 +1051,20 @@ export function ForgeTui({ config }) {
             return;
         }
         if (!key.ctrl && !key.meta && character) {
+            // Real pastes go through usePaste below (bracketed paste mode delivers
+            // the whole blob atomically, however many raw chunks the terminal
+            // split it into). This branch only still sees large text if the
+            // terminal doesn't support bracketed paste at all — same collapse
+            // logic as a fallback.
             if (character.length > PASTE_COLLAPSE_THRESHOLD) {
-                const content = character.length > MAX_PASTE_CHARS ? `${character.slice(0, MAX_PASTE_CHARS)}\n[…truncated, pasted content exceeded ${MAX_PASTE_CHARS.toLocaleString("en-US")} characters]` : character;
-                const token = pastePlaceholder(++pasteCounterRef.current, content);
-                pastedBlocksRef.current.set(token, content);
-                setInput((value) => value.slice(0, cursor) + token + value.slice(cursor));
-                setCursor((value) => value + token.length);
-                setNotice(`Pasted ${content.length.toLocaleString("en-US")} characters — kept as a placeholder so the composer stays responsive.`);
-                setRevision((value) => value + 1);
+                insertPastedText(character);
                 return;
             }
             setInput((value) => value.slice(0, cursor) + character + value.slice(cursor));
             setCursor((value) => value + character.length);
         }
     });
+    usePaste((text) => { insertPastedText(text); });
     const profile = config.profiles[config.activeProfile];
     const allMessages = messagesRef.current.filter((message) => message.role === "user" || message.role === "assistant");
     const displayMessages = streamText ? [...allMessages, { role: "assistant", content: streamText }] : allMessages;
