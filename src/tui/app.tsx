@@ -832,9 +832,15 @@ export function ForgeTui({ config }: { config: ForgeConfig }): React.ReactElemen
   if (overlay) return <Overlay dimensions={dimensions} itemRefs={overlayItemRefs} title={overlay.toUpperCase()} query={overlayQuery} items={filteredOverlayItems} selected={selected} theme={theme} footer="Type/filter · click or ↑/↓ + Enter · wheel scroll · Esc close" />;
 
   return <Box flexDirection="column" height={dimensions.rows} width={dimensions.columns}>
-    <Box borderStyle="round" borderColor={theme.focusBorder} paddingX={1} justifyContent="space-between">
-      <Text bold color={theme.accent}>◆ FORGE</Text>
-      <Text wrap="truncate-end">{sanitizeTerminalText(path.basename(config.permissions.workspaceRoot))} · {sanitizeTerminalText(config.activeProfile)}/{sanitizeTerminalText(profile.model)} · {profile.kind === "local" ? "● local" : "◉ cloud"} · {config.permissions.mode}{config.routing.offline ? " · offline" : ""}</Text>
+    <Box borderStyle="round" borderColor={theme.focusBorder} paddingX={1}>
+      <Box flexShrink={0}><Text bold color={theme.accent}>◆ FORGE</Text></Box>
+      {/* flexGrow+minWidth=0 forces Yoga to give this a real bounded width so
+          wrap="truncate-end" has something to truncate against; without it,
+          long workspace/profile/model names overflow the header and corrupt
+          it character-for-character against "FORGE" instead of truncating. */}
+      <Box flexGrow={1} flexShrink={1} minWidth={0} justifyContent="flex-end">
+        <Text wrap="truncate-end"> {sanitizeTerminalText(path.basename(config.permissions.workspaceRoot))} · {sanitizeTerminalText(config.activeProfile)}/{sanitizeTerminalText(profile.model)} · {profile.kind === "local" ? "● local" : "◉ cloud"} · {config.permissions.mode}{config.routing.offline ? " · offline" : ""}</Text>
+      </Box>
     </Box>
 
     <Box flexGrow={1} flexShrink={1} flexBasis={0} overflow="hidden">
@@ -867,11 +873,11 @@ export function ForgeTui({ config }: { config: ForgeConfig }): React.ReactElemen
       <Text color={busy ? theme.warning : theme.text} wrap="wrap">{sanitizeTerminalText(busy ? `Working… type to queue · Esc cancel${input ? `\n› ${cursorView}` : ""}` : `› ${cursorView}`)}</Text>
     </Box>
     {suggestions.length > 0 && !overlay && <Text color={theme.muted}> {suggestions.join("  ")}</Text>}
-    <Box paddingX={1} justifyContent="space-between">
+    <Box paddingX={1} overflow="hidden">
       <Text color={limitExceeded ? theme.danger : theme.muted} bold={limitExceeded} wrap="truncate-end">{sanitizeTerminalText(usageLine)}</Text>
     </Box>
     {queuedPrompt && <Text color={theme.warning} wrap="truncate-end"> Queued: {sanitizeTerminalText(queuedPrompt)}</Text>}
-    <Box paddingX={1} gap={1}>
+    <Box paddingX={1} gap={1} overflow="hidden">
       <Box ref={commandButtonRef}><Text color={theme.muted}>[Cmd ^K]</Text></Box>
       <Box ref={filesButtonRef}><Text color={theme.muted}>[Files ^P]</Text></Box>
       <Box ref={modelsButtonRef}><Text color={theme.muted}>[Models ^M]</Text></Box>

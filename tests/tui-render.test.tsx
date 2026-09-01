@@ -42,6 +42,34 @@ describe("Forge TUI rendering", () => {
     expect(output).toContain("[Mode ^A]");
   });
 
+  it("truncates a long header status line instead of overlapping the FORGE label", async () => {
+    const stdout = new PassThrough() as unknown as NodeJS.WriteStream;
+    const stderr = new PassThrough() as unknown as NodeJS.WriteStream;
+    const stdin = new PassThrough() as unknown as NodeJS.ReadStream;
+    Object.assign(stdout, { columns: 80, rows: 24, isTTY: false });
+    Object.assign(stdin, { isTTY: true, setRawMode: vi.fn(), ref: vi.fn(), unref: vi.fn() });
+    let output = "";
+    stdout.on("data", (chunk) => { output += chunk.toString(); });
+    // A long profile/model name is entirely plausible in real use and, before
+    // this fix, the header's two Text siblings had no flex constraint against
+    // each other: the right side rendered at its full natural width instead
+    // of truncating, overlapping and partially overwriting "FORGE" on a
+    // narrow terminal — a reproducible layout corruption, not a rendering
+    // artifact specific to any one terminal emulator.
+    const config = migrateConfig({
+      activeProfile: "a-very-long-profile-name-for-testing",
+      profiles: { "a-very-long-profile-name-for-testing": { baseURL: "https://example.test", apiKey: "", format: "openai", model: "some-really-long-model-identifier-name" } },
+    });
+
+    const instance = render(React.createElement(ForgeTui, { config }), { stdout, stderr, stdin, interactive: false, patchConsole: false });
+    await instance.waitUntilRenderFlush();
+    instance.unmount();
+    await instance.waitUntilExit();
+
+    expect(output).toContain("◆ FORGE");
+    expect(output).not.toMatch(/FORGE[^\s│]/);
+  });
+
   it("cycles the permission mode with Ctrl+A", async () => {
     const stdout = new PassThrough() as unknown as NodeJS.WriteStream;
     const stderr = new PassThrough() as unknown as NodeJS.WriteStream;
