@@ -2,7 +2,7 @@ import { createDriver } from "../providers/index.js";
 import { createTools } from "../tools/index.js";
 import { decidePermission } from "../security/policy.js";
 import { recordUsage } from "../usage-store.js";
-const MAX_TOOL_ITERATIONS = 10;
+const MAX_TOOL_ITERATIONS = 40;
 function parseToolArguments(call) {
     try {
         const value = JSON.parse(call.arguments || "{}");

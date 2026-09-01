@@ -69,4 +69,41 @@ describe("workspace-scoped tools", () => {
     const output = await createTools({ workspaceRoot: root }).find((item) => item.def.name === "workspace_stats")!.execute({});
     expect(JSON.parse(output)).toMatchObject({ files: 2, extensions: { ".ts": 1, ".md": 1 } });
   });
+
+  it("moves files without overwriting an existing target", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "forge-tools-"));
+    created.push(root);
+    fs.writeFileSync(path.join(root, "source.txt"), "move me");
+    fs.writeFileSync(path.join(root, "taken.txt"), "already here");
+    const tools = createTools({ workspaceRoot: root });
+    const move = tools.find((item) => item.def.name === "move_file")!;
+    await expect(move.execute({ source: "source.txt", destination: "taken.txt" })).rejects.toThrow(/already exists/i);
+    await expect(move.execute({ source: "source.txt", destination: "nested/moved.txt" })).resolves.toContain("Moved");
+    expect(fs.existsSync(path.join(root, "source.txt"))).toBe(false);
+    expect(fs.readFileSync(path.join(root, "nested", "moved.txt"), "utf-8")).toBe("move me");
+  });
+
+  it("deletes files but refuses directories", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "forge-tools-"));
+    created.push(root);
+    fs.writeFileSync(path.join(root, "gone.txt"), "bye");
+    fs.mkdirSync(path.join(root, "dir"));
+    const tools = createTools({ workspaceRoot: root });
+    const del = tools.find((item) => item.def.name === "delete_file")!;
+    await expect(del.execute({ path: "dir" })).rejects.toThrow(/only removes files/i);
+    await expect(del.execute({ path: "gone.txt" })).resolves.toContain("Deleted");
+    expect(fs.existsSync(path.join(root, "gone.txt"))).toBe(false);
+  });
+
+  it("tracks a todo list across reads and writes", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "forge-tools-"));
+    created.push(root);
+    const tools = createTools({ workspaceRoot: root });
+    const write = tools.find((item) => item.def.name === "todo_write")!;
+    const read = tools.find((item) => item.def.name === "todo_read")!;
+    await expect(read.execute({})).resolves.toBe("(no todos)");
+    await expect(write.execute({ items: [{ content: "Write tests", status: "in_progress" }, { content: "Ship it", status: "pending" }] }))
+      .resolves.toBe("[~] Write tests\n[ ] Ship it");
+    await expect(read.execute({})).resolves.toBe("[~] Write tests\n[ ] Ship it");
+  });
 });

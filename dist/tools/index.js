@@ -8,6 +8,15 @@ import { validatePublicUrl } from "../security/network.js";
 import { resolveWorkspacePath } from "../security/workspace.js";
 const MAX_OUTPUT = 24_000;
 const ajv = new Ajv2020({ allErrors: true });
+// Keyed by workspace root so a plan set with todo_write survives across
+// turns of the same chat session (each turn rebuilds the tool list).
+const todoStore = new Map();
+function renderTodos(items) {
+    if (!items.length)
+        return "(no todos)";
+    const marker = { pending: "[ ]", in_progress: "[~]", completed: "[x]" };
+    return items.map((item) => `${marker[item.status]} ${item.content}`).join("\n");
+}
 function clip(value) {
     return value.length > MAX_OUTPUT ? `${value.slice(0, MAX_OUTPUT)}\n…[truncated]` : value;
 }
@@ -265,6 +274,73 @@ export function createTools(context) {
             fs.copyFileSync(source, destination, fs.constants.COPYFILE_EXCL);
             return `Copied ${path.relative(root, source)} to ${path.relative(root, destination)}`;
         }),
+        tool({
+            name: "move_file",
+            description: "Move or rename a workspace file to a new workspace path without overwriting an existing target.",
+            parameters: { type: "object", properties: { source: { type: "string" }, destination: { type: "string" } }, required: ["source", "destination"], additionalProperties: false },
+        }, "write", async (args) => {
+            const source = resolveWorkspacePath(root, text(args, "source"));
+            const destination = resolveWorkspacePath(root, text(args, "destination"), { allowMissing: true });
+            if (fs.existsSync(destination))
+                throw new Error(`Destination already exists: ${path.relative(root, destination)}`);
+            fs.mkdirSync(path.dirname(destination), { recursive: true });
+            fs.renameSync(source, destination);
+            return `Moved ${path.relative(root, source)} to ${path.relative(root, destination)}`;
+        }),
+        tool({
+            name: "delete_file",
+            description: "Delete a single workspace file. Refuses to delete directories.",
+            parameters: { type: "object", properties: { path: { type: "string" } }, required: ["path"], additionalProperties: false },
+        }, "write", async (args) => {
+            const file = resolveWorkspacePath(root, text(args, "path"));
+            if (!fs.statSync(file).isFile())
+                throw new Error("delete_file only removes files; use run_command for directories.");
+            fs.unlinkSync(file);
+            return `Deleted ${path.relative(root, file)}`;
+        }),
+        tool({
+            name: "todo_write",
+            description: "Replace the working plan's todo list. Use this to track multi-step tasks: one item in_progress at a time, mark items completed as you finish them.",
+            parameters: {
+                type: "object",
+                properties: {
+                    items: {
+                        type: "array",
+                        items: {
+                            type: "object",
+                            properties: {
+                                content: { type: "string" },
+                                status: { type: "string", enum: ["pending", "in_progress", "completed"] },
+                            },
+                            required: ["content", "status"],
+                            additionalProperties: false,
+                        },
+                    },
+                },
+                required: ["items"],
+                additionalProperties: false,
+            },
+        }, "read", async (args) => {
+            const raw = args.items;
+            if (!Array.isArray(raw))
+                throw new Error("Expected array argument: items");
+            const items = raw.map((entry, index) => {
+                const record = entry;
+                const content = typeof record.content === "string" ? record.content : "";
+                const status = record.status;
+                if (!content || (status !== "pending" && status !== "in_progress" && status !== "completed")) {
+                    throw new Error(`Invalid todo item at index ${index}`);
+                }
+                return { id: String(index), content, status };
+            });
+            todoStore.set(root, items);
+            return renderTodos(items);
+        }),
+        tool({
+            name: "todo_read",
+            description: "Read the working plan's current todo list.",
+            parameters: { type: "object", properties: {}, additionalProperties: false },
+        }, "read", async () => renderTodos(todoStore.get(root) ?? [])),
         tool({
             name: "bash_exec",
             description: "High-risk compatibility escape hatch: execute a shell command inside the workspace.",

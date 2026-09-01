@@ -6,7 +6,7 @@ import { decidePermission } from "../security/policy.js";
 import type { AgentEvent, AgentEventListener, AgentUsage, ToolActivity } from "./events.js";
 import { recordUsage } from "../usage-store.js";
 
-const MAX_TOOL_ITERATIONS = 10;
+const MAX_TOOL_ITERATIONS = 40;
 
 export interface ApprovalRequest {
   call: ToolCall;
