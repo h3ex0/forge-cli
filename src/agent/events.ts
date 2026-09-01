@@ -16,6 +16,8 @@ export interface ToolActivity {
   result?: string;
   startedAt: number;
   durationMs?: number;
+  /** Unified diff preview of what this call would change, shown at approval time. */
+  diff?: string;
 }
 
 export type AgentEvent =

@@ -4,8 +4,17 @@ import { exec, execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import fg from "fast-glob";
+import { createTwoFilesPatch } from "diff";
 import { validatePublicUrl } from "../security/network.js";
 import { resolveWorkspacePath } from "../security/workspace.js";
+/** Build a unified diff for an approval preview; returns undefined when there is nothing to show. */
+function unifiedDiff(relativePath, before, after) {
+    if (before === after)
+        return undefined;
+    const patch = createTwoFilesPatch(relativePath, relativePath, before, after, "before", "after", { context: 2 });
+    const lines = patch.split("\n").filter((line) => !line.startsWith("Index:") && !line.startsWith("==="));
+    return lines.join("\n").trim();
+}
 const MAX_OUTPUT = 24_000;
 const ajv = new Ajv2020({ allErrors: true });
 // Keyed by workspace root so a plan set with todo_write survives across
@@ -57,7 +66,7 @@ function runFile(file, args, cwd, timeout = 60_000, signal) {
         });
     });
 }
-function tool(def, risk, execute) {
+function tool(def, risk, execute, preview) {
     const validate = ajv.compile(def.parameters);
     return {
         def,
@@ -68,6 +77,7 @@ function tool(def, risk, execute) {
                 throw new Error(`Invalid tool arguments: ${ajv.errorsText(validate.errors)}`);
             return execute(args, signal);
         },
+        preview: preview && ((args) => (validate(args) ? preview(args) : undefined)),
     };
 }
 export function createTools(context) {
@@ -155,6 +165,16 @@ export function createTools(context) {
             fs.writeFileSync(temporary, content, "utf-8");
             fs.renameSync(temporary, file);
             return `Wrote ${Buffer.byteLength(content, "utf-8")} bytes to ${path.relative(root, file)}`;
+        }, (args) => {
+            try {
+                const relativePath = text(args, "path");
+                const file = resolveWorkspacePath(root, relativePath, { allowMissing: true });
+                const before = fs.existsSync(file) && fs.statSync(file).isFile() ? fs.readFileSync(file, "utf-8") : "";
+                return unifiedDiff(relativePath, before, text(args, "content"));
+            }
+            catch {
+                return undefined;
+            }
         }),
         tool({
             name: "edit_file",
@@ -174,6 +194,19 @@ export function createTools(context) {
                 throw new Error(occurrences ? `old_string is not unique (${occurrences} matches)` : "old_string not found");
             fs.writeFileSync(file, original.replace(oldValue, text(args, "new_string")), "utf-8");
             return `Edited ${path.relative(root, file)}`;
+        }, (args) => {
+            try {
+                const relativePath = text(args, "path");
+                const file = resolveWorkspacePath(root, relativePath);
+                const original = fs.readFileSync(file, "utf-8");
+                const oldValue = text(args, "old_string");
+                if (original.split(oldValue).length - 1 !== 1)
+                    return undefined;
+                return unifiedDiff(relativePath, original, original.replace(oldValue, text(args, "new_string")));
+            }
+            catch {
+                return undefined;
+            }
         }),
         tool({
             name: "list_dir",

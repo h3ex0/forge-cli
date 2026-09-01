@@ -64,9 +64,21 @@ function Overlay({ dimensions, title, query, items, selected, theme, footer, ite
                             itemRefs?.current.delete(absolute); }, children: _jsxs(Text, { color: absolute === selected ? theme.accent : theme.text, inverse: absolute === selected, wrap: "truncate-end", children: [absolute === selected ? " › " : "   ", sanitizeTerminalText(item.label), item.detail ? `  ${sanitizeTerminalText(item.detail)}` : ""] }) }, item.id);
                 }), !items.length && _jsx(Text, { color: theme.muted, children: "No items available." })] }) });
 }
+function DiffPreview({ diff, theme, maxLines }) {
+    const lines = diff.split("\n");
+    const visible = lines.slice(0, maxLines);
+    return _jsxs(Box, { flexDirection: "column", children: [visible.map((line, index) => {
+                const color = line.startsWith("+") && !line.startsWith("+++") ? theme.success
+                    : line.startsWith("-") && !line.startsWith("---") ? theme.danger
+                        : line.startsWith("@@") ? theme.accent
+                            : theme.muted;
+                return _jsx(Text, { color: color, wrap: "truncate-end", children: line || " " }, index);
+            }), lines.length > maxLines && _jsxs(Text, { color: theme.muted, children: ["\u2026", lines.length - maxLines, " more line(s) not shown"] })] });
+}
 function ApprovalModal({ dimensions, state, choice, theme, allowRef, denyRef }) {
     const args = summarizeToolArguments(state.request.activity.args);
-    return _jsxs(Frame, { dimensions: dimensions, title: `APPROVAL REQUIRED · ${state.request.activity.risk.toUpperCase()}`, titleColor: theme.warning, footer: "\u2190/\u2192 or Tab to choose, Enter to confirm \u00B7 Y allows \u00B7 N/Esc denies", children: [_jsx(Text, { bold: true, children: state.request.activity.name }), _jsx(Text, { color: theme.muted, wrap: "wrap", children: args }), _jsx(Text, { children: " " }), _jsxs(Box, { gap: 2, children: [_jsx(Box, { ref: allowRef, children: _jsx(Text, { color: theme.success, inverse: choice === "allow", bold: choice === "allow", children: choice === "allow" ? "› [ Allow once ]" : "  [ Allow once ]" }) }), _jsx(Box, { ref: denyRef, children: _jsx(Text, { color: theme.danger, inverse: choice === "deny", bold: choice === "deny", children: choice === "deny" ? "› [ Deny ]" : "  [ Deny ]" }) })] }), _jsx(Text, { children: " " }), _jsx(Text, { color: theme.muted, wrap: "wrap", children: "Mouse clicks need capture mode on (Ctrl+T); the keyboard always works here." })] });
+    const diff = state.request.activity.diff;
+    return _jsxs(Frame, { dimensions: dimensions, title: `APPROVAL REQUIRED · ${state.request.activity.risk.toUpperCase()}`, titleColor: theme.warning, footer: "\u2190/\u2192 or Tab to choose, Enter to confirm \u00B7 Y allows \u00B7 N/Esc denies", children: [_jsx(Text, { bold: true, children: state.request.activity.name }), _jsx(Text, { color: theme.muted, wrap: "wrap", children: args }), _jsx(Text, { children: " " }), diff && _jsx(DiffPreview, { diff: diff, theme: theme, maxLines: Math.max(4, dimensions.rows - 16) }), diff && _jsx(Text, { children: " " }), _jsxs(Box, { gap: 2, children: [_jsx(Box, { ref: allowRef, children: _jsx(Text, { color: theme.success, inverse: choice === "allow", bold: choice === "allow", children: choice === "allow" ? "› [ Allow once ]" : "  [ Allow once ]" }) }), _jsx(Box, { ref: denyRef, children: _jsx(Text, { color: theme.danger, inverse: choice === "deny", bold: choice === "deny", children: choice === "deny" ? "› [ Deny ]" : "  [ Deny ]" }) })] }), _jsx(Text, { children: " " }), _jsx(Text, { color: theme.muted, wrap: "wrap", children: "Mouse clicks need capture mode on (Ctrl+T); the keyboard always works here." })] });
 }
 function KeyEntryModal({ dimensions, name, mode, draft, theme }) {
     return _jsxs(Frame, { dimensions: dimensions, title: mode === "add" ? `NEW PROVIDER · ${name}` : `UPDATE KEY · ${name}`, titleColor: theme.accent, footer: "Enter to save \u00B7 Esc to cancel", children: [_jsx(Text, { color: theme.muted, wrap: "wrap", children: "Paste or type the API key. It is masked here and never added to composer history." }), _jsx(Text, { children: " " }), _jsxs(Text, { color: theme.text, children: ["•".repeat(draft.length), "\u2588"] })] });
@@ -544,9 +556,14 @@ export function ForgeTui({ config }) {
                     }
                     if (decision === "ask") {
                         const id = `command-${Date.now()}-${index}`;
+                        let diff;
+                        try {
+                            diff = tool.preview?.(requested.args);
+                        }
+                        catch { /* preview is best-effort */ }
                         const allowed = await requestApproval({
                             call: { id, name: tool.def.name, arguments: JSON.stringify(requested.args) },
-                            activity: { id, name: tool.def.name, risk: tool.risk, status: "waiting", args: requested.args, startedAt: Date.now() },
+                            activity: { id, name: tool.def.name, risk: tool.risk, status: "waiting", args: requested.args, diff, startedAt: Date.now() },
                         });
                         if (!allowed) {
                             setNotice("Command denied.");

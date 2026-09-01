@@ -64,6 +64,35 @@ describe("AgentSession", () => {
     expect(messages.at(-1)).toEqual({ role: "assistant", content: "done" });
   });
 
+  it("attaches a tool's diff preview to the approval request", async () => {
+    let calls = 0;
+    const driver: ChatDriver = {
+      async streamChat(_messages, _tools, _model, callbacks) {
+        calls += 1;
+        if (calls === 1) callbacks.onToolCallsComplete([{ id: "1", name: "write_file", arguments: "{\"path\":\"a.txt\"}" }]);
+        else callbacks.onTextDelta("done");
+        callbacks.onDone();
+      },
+    };
+    const spec = {
+      def: { name: "write_file", description: "write", parameters: {} },
+      risk: "write",
+      destructive: true,
+      execute: vi.fn(async () => "wrote file"),
+      preview: vi.fn(() => "+added line"),
+    } satisfies ToolSpec;
+    vi.mocked(createDriver).mockReturnValue(driver);
+    vi.mocked(createTools).mockReturnValue([spec]);
+    let seenDiff: string | undefined;
+    const approve = vi.fn(async (request) => { seenDiff = request.activity.diff; return true; });
+    const session = new AgentSession({ config: config(), messages: [{ role: "system", content: "system" }], approve, recordUsage: () => undefined });
+
+    await session.send("edit");
+
+    expect(spec.preview).toHaveBeenCalledOnce();
+    expect(seenDiff).toBe("+added line");
+  });
+
   it("delegates to a subagent via spawn_agent and folds its report and usage back in", async () => {
     let call = 0;
     const driver: ChatDriver = {

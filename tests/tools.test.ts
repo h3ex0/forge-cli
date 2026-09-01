@@ -95,6 +95,39 @@ describe("workspace-scoped tools", () => {
     expect(fs.existsSync(path.join(root, "gone.txt"))).toBe(false);
   });
 
+  it("previews write_file as a diff without touching the filesystem", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "forge-tools-"));
+    created.push(root);
+    fs.writeFileSync(path.join(root, "existing.txt"), "one\ntwo\n");
+    const tools = createTools({ workspaceRoot: root });
+    const write = tools.find((item) => item.def.name === "write_file")!;
+
+    const diffForNewFile = write.preview?.({ path: "new.txt", content: "hello\n" });
+    expect(diffForNewFile).toContain("+hello");
+    expect(fs.existsSync(path.join(root, "new.txt"))).toBe(false);
+
+    const diffForEdit = write.preview?.({ path: "existing.txt", content: "one\nTWO\n" });
+    expect(diffForEdit).toContain("-two");
+    expect(diffForEdit).toContain("+TWO");
+    expect(fs.readFileSync(path.join(root, "existing.txt"), "utf-8")).toBe("one\ntwo\n");
+
+    expect(write.preview?.({ path: "existing.txt", content: "one\ntwo\n" })).toBeUndefined();
+  });
+
+  it("previews edit_file as a diff, or nothing when the match is ambiguous", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "forge-tools-"));
+    created.push(root);
+    fs.writeFileSync(path.join(root, "notes.txt"), "alpha\nbeta\nbeta\n");
+    const tools = createTools({ workspaceRoot: root });
+    const edit = tools.find((item) => item.def.name === "edit_file")!;
+
+    expect(edit.preview?.({ path: "notes.txt", old_string: "beta", new_string: "gamma" })).toBeUndefined();
+    const diff = edit.preview?.({ path: "notes.txt", old_string: "alpha", new_string: "ALPHA" });
+    expect(diff).toContain("-alpha");
+    expect(diff).toContain("+ALPHA");
+    expect(fs.readFileSync(path.join(root, "notes.txt"), "utf-8")).toBe("alpha\nbeta\nbeta\n");
+  });
+
   it("tracks a todo list across reads and writes", async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "forge-tools-"));
     created.push(root);

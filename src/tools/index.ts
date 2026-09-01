@@ -4,6 +4,7 @@ import { exec, execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import { Ajv2020, type ValidateFunction } from "ajv/dist/2020.js";
 import fg from "fast-glob";
+import { createTwoFilesPatch } from "diff";
 import type { ToolDef } from "../providers/types.js";
 import type { ToolRisk } from "../security/policy.js";
 import { validatePublicUrl } from "../security/network.js";
@@ -18,6 +19,16 @@ export interface ToolSpec {
   risk: ToolRisk;
   destructive: boolean;
   execute: (args: Record<string, unknown>, signal?: AbortSignal) => Promise<string>;
+  /** Render a unified diff of what this call would change, without applying it. Read-only tools omit it. */
+  preview?: (args: Record<string, unknown>) => string | undefined;
+}
+
+/** Build a unified diff for an approval preview; returns undefined when there is nothing to show. */
+function unifiedDiff(relativePath: string, before: string, after: string): string | undefined {
+  if (before === after) return undefined;
+  const patch = createTwoFilesPatch(relativePath, relativePath, before, after, "before", "after", { context: 2 });
+  const lines = patch.split("\n").filter((line) => !line.startsWith("Index:") && !line.startsWith("==="));
+  return lines.join("\n").trim();
 }
 
 const MAX_OUTPUT = 24_000;
@@ -80,7 +91,7 @@ function runFile(file: string, args: string[], cwd: string, timeout = 60_000, si
   });
 }
 
-function tool(def: ToolDef, risk: ToolRisk, execute: ToolSpec["execute"]): ToolSpec {
+function tool(def: ToolDef, risk: ToolRisk, execute: ToolSpec["execute"], preview?: ToolSpec["preview"]): ToolSpec {
   const validate: ValidateFunction = ajv.compile(def.parameters);
   return {
     def,
@@ -90,6 +101,7 @@ function tool(def: ToolDef, risk: ToolRisk, execute: ToolSpec["execute"]): ToolS
       if (!validate(args)) throw new Error(`Invalid tool arguments: ${ajv.errorsText(validate.errors)}`);
       return execute(args, signal);
     },
+    preview: preview && ((args) => (validate(args) ? preview(args) : undefined)),
   };
 }
 
@@ -194,6 +206,16 @@ export function createTools(context: ToolContext): ToolSpec[] {
         fs.renameSync(temporary, file);
         return `Wrote ${Buffer.byteLength(content, "utf-8")} bytes to ${path.relative(root, file)}`;
       },
+      (args) => {
+        try {
+          const relativePath = text(args, "path");
+          const file = resolveWorkspacePath(root, relativePath, { allowMissing: true });
+          const before = fs.existsSync(file) && fs.statSync(file).isFile() ? fs.readFileSync(file, "utf-8") : "";
+          return unifiedDiff(relativePath, before, text(args, "content"));
+        } catch {
+          return undefined;
+        }
+      },
     ),
     tool(
       {
@@ -215,6 +237,18 @@ export function createTools(context: ToolContext): ToolSpec[] {
         if (occurrences !== 1) throw new Error(occurrences ? `old_string is not unique (${occurrences} matches)` : "old_string not found");
         fs.writeFileSync(file, original.replace(oldValue, text(args, "new_string")), "utf-8");
         return `Edited ${path.relative(root, file)}`;
+      },
+      (args) => {
+        try {
+          const relativePath = text(args, "path");
+          const file = resolveWorkspacePath(root, relativePath);
+          const original = fs.readFileSync(file, "utf-8");
+          const oldValue = text(args, "old_string");
+          if (original.split(oldValue).length - 1 !== 1) return undefined;
+          return unifiedDiff(relativePath, original, original.replace(oldValue, text(args, "new_string")));
+        } catch {
+          return undefined;
+        }
       },
     ),
     tool(

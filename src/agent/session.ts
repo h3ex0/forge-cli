@@ -209,7 +209,9 @@ export class AgentSession {
           continue;
         }
         const args = parseToolArguments(call);
-        const activity: ToolActivity = { id: call.id, name: call.name, risk: tool.risk, status: "waiting", args, startedAt: Date.now() };
+        let diff: string | undefined;
+        try { diff = tool.preview?.(args); } catch { /* preview is best-effort; approval still proceeds without it */ }
+        const activity: ToolActivity = { id: call.id, name: call.name, risk: tool.risk, status: "waiting", args, diff, startedAt: Date.now() };
         this.emit({ type: "tool.requested", call, activity: { ...activity } });
         const decision = decidePermission(this.config.permissions.mode, tool.risk);
         const allowed = decision === "allow" || (decision === "ask" && await this.approve({ call, activity }));

@@ -93,12 +93,30 @@ function Overlay({ dimensions, title, query, items, selected, theme, footer, ite
   </Frame>;
 }
 
+function DiffPreview({ diff, theme, maxLines }: { diff: string; theme: ReturnType<typeof getTheme>; maxLines: number }): React.ReactElement {
+  const lines = diff.split("\n");
+  const visible = lines.slice(0, maxLines);
+  return <Box flexDirection="column">
+    {visible.map((line, index) => {
+      const color = line.startsWith("+") && !line.startsWith("+++") ? theme.success
+        : line.startsWith("-") && !line.startsWith("---") ? theme.danger
+        : line.startsWith("@@") ? theme.accent
+        : theme.muted;
+      return <Text key={index} color={color} wrap="truncate-end">{line || " "}</Text>;
+    })}
+    {lines.length > maxLines && <Text color={theme.muted}>…{lines.length - maxLines} more line(s) not shown</Text>}
+  </Box>;
+}
+
 function ApprovalModal({ dimensions, state, choice, theme, allowRef, denyRef }: { dimensions: FrameDimensions; state: ApprovalState; choice: "allow" | "deny"; theme: ReturnType<typeof getTheme>; allowRef?: React.Ref<DOMElement>; denyRef?: React.Ref<DOMElement> }): React.ReactElement {
   const args = summarizeToolArguments(state.request.activity.args);
+  const diff = state.request.activity.diff;
   return <Frame dimensions={dimensions} title={`APPROVAL REQUIRED · ${state.request.activity.risk.toUpperCase()}`} titleColor={theme.warning} footer="←/→ or Tab to choose, Enter to confirm · Y allows · N/Esc denies">
     <Text bold>{state.request.activity.name}</Text>
     <Text color={theme.muted} wrap="wrap">{args}</Text>
     <Text> </Text>
+    {diff && <DiffPreview diff={diff} theme={theme} maxLines={Math.max(4, dimensions.rows - 16)} />}
+    {diff && <Text> </Text>}
     <Box gap={2}>
       <Box ref={allowRef}><Text color={theme.success} inverse={choice === "allow"} bold={choice === "allow"}>{choice === "allow" ? "› [ Allow once ]" : "  [ Allow once ]"}</Text></Box>
       <Box ref={denyRef}><Text color={theme.danger} inverse={choice === "deny"} bold={choice === "deny"}>{choice === "deny" ? "› [ Deny ]" : "  [ Deny ]"}</Text></Box>
@@ -476,9 +494,11 @@ export function ForgeTui({ config }: { config: ForgeConfig }): React.ReactElemen
           if (decision === "deny") { setNotice(`${config.permissions.mode} mode blocks ${tool.risk} tools.`); break; }
           if (decision === "ask") {
             const id = `command-${Date.now()}-${index}`;
+            let diff: string | undefined;
+            try { diff = tool.preview?.(requested.args); } catch { /* preview is best-effort */ }
             const allowed = await requestApproval({
               call: { id, name: tool.def.name, arguments: JSON.stringify(requested.args) },
-              activity: { id, name: tool.def.name, risk: tool.risk, status: "waiting", args: requested.args, startedAt: Date.now() },
+              activity: { id, name: tool.def.name, risk: tool.risk, status: "waiting", args: requested.args, diff, startedAt: Date.now() },
             });
             if (!allowed) { setNotice("Command denied."); break; }
           }
