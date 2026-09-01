@@ -119,7 +119,7 @@ The full-screen workspace needs a real terminal at least 72x18. When input or ou
 
 ## Full-screen workspace
 
-The TUI and inline REPL share the same agent engine, tool loop, permission decisions, messages, usage accounting, and cancellation behavior. The responsive layout shows conversation, tool activity, project context, the active model, and session state without taking focus away from the composer.
+The full-screen workspace shows conversation, tool activity, project context, the active model, and session state without taking focus away from the composer. Command/model/file/session lists, the approval prompt, and provider/key entry each take over the whole screen while active (like the reader pane) and return to the chat view on close, rather than floating over live content.
 
 | Shortcut | Action |
 | --- | --- |
@@ -127,6 +127,7 @@ The TUI and inline REPL share the same agent engine, tool loop, permission decis
 | `Ctrl+P` | Search workspace files and pin context |
 | `Ctrl+M` | Switch cloud profiles or local models |
 | `Ctrl+S` | Browse saved and automatic sessions |
+| `Ctrl+A` | Cycle permission mode: read-only → balanced → autonomous |
 | `Ctrl+T` | Toggle mouse capture on or off |
 | `Ctrl+Y` | Open the focused pane in the borderless reader |
 | `Ctrl+E` | Open full session status or the latest error in the reader |
@@ -137,13 +138,13 @@ The TUI and inline REPL share the same agent engine, tool loop, permission decis
 | `Ctrl+C` | Cancel active work; exit when idle |
 | `?` | Open help from an empty composer |
 
+When an approval prompt is showing, use `←`/`→` or `Tab` to move between "Allow once" and "Deny" and `Enter` to confirm the highlighted choice, or the `Y`/`N` shortcuts directly — the highlighted choice defaults to Deny. Mouse clicks on it (or anywhere else) only register once mouse capture is on (`Ctrl+T`).
+
 Native text selection is the default: drag normally to select and copy terminal text. Press `Ctrl+T` or run `/mouse on` when you want clickable panes, footer actions, overlay rows, wheel scrolling, and approval buttons. Click `[Mouse on]` or press `Ctrl+T` again to return to selection mode. Many terminals also support `Shift+drag` for selection while mouse capture is active.
 
 Because terminals select screen rows rather than UI components, selecting directly across the three-column workspace can include neighboring borders. Focus a pane with `Tab` and press `Ctrl+Y`, or enable mouse mode and click `[Reader]`/right-click a pane. `Ctrl+E` opens the complete session status or latest error directly. Forge replaces the columns with a borderless, full-width view containing only that pane's untruncated text. Mouse capture switches off automatically so you can drag-select cleanly; `Esc` returns to the workspace.
 
 Commands, model names, files, and sessions are searchable inside their overlays. Prompts typed while Forge is working are queued for the next turn. The TUI autosaves conversations as `autosave` and records `recovery-latest` before approved write/process operations.
-
-The inline REPL remains available for classic command output and provider-creation prompts. It includes persistent history, Up/Down navigation, Tab completion, quoted slash-command arguments, and multiline paste support.
 
 ## Tokens, cost, and subscription limits
 
@@ -200,7 +201,7 @@ Offline mode removes network tools and refuses cloud-backed one-shot prompts.
 
 ## Configuration and credentials
 
-Forge uses a versioned configuration at `~/.forge/config.json`. Existing configurations migrate automatically to schema v5 with the TUI-first, selection-friendly default. Use `Ctrl+T` or `/mouse on` for clickable controls, or `/ui inline` or `forge chat` to retain the classic experience. Remote API keys are stored through the operating-system credential manager when available; headless environments can use:
+Forge uses a versioned configuration at `~/.forge/config.json` (override the directory with the `FORGE_HOME` environment variable). Existing configurations migrate automatically to schema v5 with the TUI-first, selection-friendly default. Use `Ctrl+T` or `/mouse on` for clickable controls. Remote API keys are stored through the operating-system credential manager when available; headless environments can use:
 
 ```text
 FORGE_API_KEY_<PROFILE_NAME>
@@ -208,7 +209,7 @@ FORGE_API_KEY_<PROFILE_NAME>
 
 Profile names are uppercased and non-alphanumeric characters become underscores. For example, `open-router` maps to `FORGE_API_KEY_OPEN_ROUTER`.
 
-`/key` remains available for compatibility but is deprecated because command arguments can appear in terminal history. Prefer the setup flow, OS credential store, or environment variable.
+`forge key set <profile>` and the TUI's `/key <profile>` both prompt for the key with the input hidden rather than taking it as a command-line argument, so it never lands in shell or command history.
 
 ## Project instructions
 

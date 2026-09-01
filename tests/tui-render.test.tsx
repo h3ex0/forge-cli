@@ -34,5 +34,28 @@ describe("Forge TUI rendering", () => {
     expect(output).toContain("[Mouse off ^T]");
     expect(output).toContain("[Reader ^Y]");
     expect(output).toContain("[Status ^E]");
+    expect(output).toContain("[Mode ^A]");
+  });
+
+  it("cycles the permission mode with Ctrl+A", async () => {
+    const stdout = new PassThrough() as unknown as NodeJS.WriteStream;
+    const stderr = new PassThrough() as unknown as NodeJS.WriteStream;
+    const stdin = new PassThrough() as unknown as NodeJS.ReadStream;
+    Object.assign(stdout, { columns: 120, rows: 30, isTTY: false });
+    Object.assign(stdin, { isTTY: true, setRawMode: vi.fn(), ref: vi.fn(), unref: vi.fn() });
+    let output = "";
+    stdout.on("data", (chunk) => { output += chunk.toString(); });
+    const config = migrateConfig({ activeProfile: "test", profiles: { test: { baseURL: "https://example.test", apiKey: "", format: "openai", model: "qwen" } } });
+    expect(config.permissions.mode).toBe("balanced");
+
+    const instance = render(React.createElement(ForgeTui, { config }), { stdout, stderr, stdin, interactive: false, patchConsole: false });
+    await instance.waitUntilRenderFlush();
+    output = "";
+    stdin.write("\u0001"); // Ctrl+A
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    instance.unmount();
+    await instance.waitUntilExit();
+
+    expect(output).toContain("· autonomous");
   });
 });

@@ -3,7 +3,7 @@ import path from "node:path";
 import fs from "node:fs";
 import fg from "fast-glob";
 import { Box, Text, measureElement, useApp, useInput, useStdout, type DOMElement } from "ink";
-import type { ForgeConfig, Profile } from "../config.js";
+import type { ForgeConfig, PermissionMode, Profile } from "../config.js";
 import { saveConfig } from "../config.js";
 import type { ChatMessage } from "../providers/types.js";
 import { AgentSession, type ApprovalRequest } from "../agent/session.js";
@@ -92,13 +92,18 @@ function Overlay({ dimensions, title, query, items, selected, theme, footer, ite
   </Frame>;
 }
 
-function ApprovalModal({ dimensions, state, theme, allowRef, denyRef }: { dimensions: FrameDimensions; state: ApprovalState; theme: ReturnType<typeof getTheme>; allowRef?: React.Ref<DOMElement>; denyRef?: React.Ref<DOMElement> }): React.ReactElement {
+function ApprovalModal({ dimensions, state, choice, theme, allowRef, denyRef }: { dimensions: FrameDimensions; state: ApprovalState; choice: "allow" | "deny"; theme: ReturnType<typeof getTheme>; allowRef?: React.Ref<DOMElement>; denyRef?: React.Ref<DOMElement> }): React.ReactElement {
   const args = summarizeToolArguments(state.request.activity.args);
-  return <Frame dimensions={dimensions} title={`APPROVAL REQUIRED · ${state.request.activity.risk.toUpperCase()}`} titleColor={theme.warning} footer="Y/N/Esc · Enter denies safely">
+  return <Frame dimensions={dimensions} title={`APPROVAL REQUIRED · ${state.request.activity.risk.toUpperCase()}`} titleColor={theme.warning} footer="←/→ or Tab to choose, Enter to confirm · Y allows · N/Esc denies">
     <Text bold>{state.request.activity.name}</Text>
     <Text color={theme.muted} wrap="wrap">{args}</Text>
     <Text> </Text>
-    <Box gap={2}><Box ref={allowRef}><Text color={theme.success}>[ Allow once ]</Text></Box><Box ref={denyRef}><Text color={theme.danger}>[ Deny ]</Text></Box></Box>
+    <Box gap={2}>
+      <Box ref={allowRef}><Text color={theme.success} inverse={choice === "allow"} bold={choice === "allow"}>{choice === "allow" ? "› [ Allow once ]" : "  [ Allow once ]"}</Text></Box>
+      <Box ref={denyRef}><Text color={theme.danger} inverse={choice === "deny"} bold={choice === "deny"}>{choice === "deny" ? "› [ Deny ]" : "  [ Deny ]"}</Text></Box>
+    </Box>
+    <Text> </Text>
+    <Text color={theme.muted} wrap="wrap">Mouse clicks need capture mode on (Ctrl+T); the keyboard always works here.</Text>
   </Frame>;
 }
 
@@ -123,6 +128,7 @@ export function ForgeTui({ config }: { config: ForgeConfig }): React.ReactElemen
   const [notice, setNotice] = React.useState("Ready");
   const [activities, setActivities] = React.useState<ToolActivity[]>([]);
   const [approval, setApproval] = React.useState<ApprovalState | null>(null);
+  const [approvalChoice, setApprovalChoice] = React.useState<"allow" | "deny">("deny");
   const [keyEntry, setKeyEntry] = React.useState<null | { mode: "add" | "update"; name: string; baseURL: string; format: Profile["format"]; model: string; draft: string }>(null);
   const [overlay, setOverlay] = React.useState<TuiOverlay | null>(null);
   const [overlayQuery, setOverlayQuery] = React.useState("");
@@ -160,6 +166,7 @@ export function ForgeTui({ config }: { config: ForgeConfig }): React.ReactElemen
   const sessionsButtonRef = React.useRef<DOMElement>(null!);
   const helpButtonRef = React.useRef<DOMElement>(null!);
   const mouseButtonRef = React.useRef<DOMElement>(null!);
+  const modeButtonRef = React.useRef<DOMElement>(null!);
   const readerButtonRef = React.useRef<DOMElement>(null!);
   const statusButtonRef = React.useRef<DOMElement>(null!);
   const theme = getTheme(config.ui.theme);
@@ -174,6 +181,7 @@ export function ForgeTui({ config }: { config: ForgeConfig }): React.ReactElemen
     const value = { request, resolve };
     approvalRef.current = value;
     setApproval(value);
+    setApprovalChoice("deny");
   }), []);
 
   if (!sessionRef.current) {
@@ -263,6 +271,14 @@ export function ForgeTui({ config }: { config: ForgeConfig }): React.ReactElemen
     if (!query) return overlayItems;
     return overlayItems.filter((item) => `${item.label} ${item.detail ?? ""}`.toLowerCase().includes(query));
   }, [overlayItems, overlayQuery]);
+
+  const cyclePermissionMode = React.useCallback(() => {
+    const order: PermissionMode[] = ["read-only", "balanced", "autonomous"];
+    config.permissions.mode = order[(order.indexOf(config.permissions.mode) + 1) % order.length];
+    saveConfig(config);
+    setNotice(`Permission mode set to ${config.permissions.mode}.`);
+    setRevision((value) => value + 1);
+  }, [config]);
 
   const closeApproval = React.useCallback((allowed: boolean) => {
     const current = approvalRef.current;
@@ -562,6 +578,7 @@ export function ForgeTui({ config }: { config: ForgeConfig }): React.ReactElemen
       if (containsPoint(metrics(mouseButtonRef), mouse.x, mouse.y)) {
         config.ui.mouse = false; saveConfig(config); setNotice("Mouse capture off — drag to select text; Ctrl+T turns it back on."); setRevision((value) => value + 1); return;
       }
+      if (containsPoint(metrics(modeButtonRef), mouse.x, mouse.y)) { cyclePermissionMode(); return; }
       if (containsPoint(metrics(readerButtonRef), mouse.x, mouse.y)) { openReader(); return; }
       if (containsPoint(metrics(statusButtonRef), mouse.x, mouse.y)) { openReader("context"); return; }
       for (const [index, node] of activityItemRefs.current) {
@@ -575,7 +592,9 @@ export function ForgeTui({ config }: { config: ForgeConfig }): React.ReactElemen
     }
     if (approval) {
       if (character.toLowerCase() === "y") closeApproval(true);
-      else if (character.toLowerCase() === "n" || key.escape || key.return) closeApproval(false);
+      else if (character.toLowerCase() === "n" || key.escape) closeApproval(false);
+      else if (key.return) closeApproval(approvalChoice === "allow");
+      else if (key.leftArrow || key.rightArrow || key.tab || key.upArrow || key.downArrow) setApprovalChoice((value) => (value === "allow" ? "deny" : "allow"));
       return;
     }
     if (key.ctrl && character === "c") { if (busy) { session.cancel(); operationAbortRef.current?.abort(); } else exit(); return; }
@@ -591,6 +610,7 @@ export function ForgeTui({ config }: { config: ForgeConfig }): React.ReactElemen
       setRevision((value) => value + 1);
       return;
     }
+    if (key.ctrl && character === "a") { cyclePermissionMode(); return; }
     if (key.ctrl && character === "y") { openReader(); return; }
     if (key.ctrl && character === "e") { openReader("context"); return; }
     if (key.tab) {
@@ -671,7 +691,7 @@ export function ForgeTui({ config }: { config: ForgeConfig }): React.ReactElemen
   // Each of these takes over the whole screen while active, then returns to
   // the chat view below once dismissed — see the Frame component for why.
   if (keyEntry) return <KeyEntryModal dimensions={dimensions} name={keyEntry.name} mode={keyEntry.mode} draft={keyEntry.draft} theme={theme} />;
-  if (approval) return <ApprovalModal dimensions={dimensions} allowRef={approvalAllowRef} denyRef={approvalDenyRef} state={approval} theme={theme} />;
+  if (approval) return <ApprovalModal dimensions={dimensions} allowRef={approvalAllowRef} denyRef={approvalDenyRef} state={approval} choice={approvalChoice} theme={theme} />;
   if (overlay) return <Overlay dimensions={dimensions} itemRefs={overlayItemRefs} title={overlay.toUpperCase()} query={overlayQuery} items={filteredOverlayItems} selected={selected} theme={theme} footer="Type/filter · click or ↑/↓ + Enter · wheel scroll · Esc close" />;
 
   return <Box flexDirection="column" height={dimensions.rows} width={dimensions.columns}>
@@ -723,6 +743,7 @@ export function ForgeTui({ config }: { config: ForgeConfig }): React.ReactElemen
       <Box ref={readerButtonRef}><Text color={theme.muted}>[Reader ^Y]</Text></Box>
       <Box ref={statusButtonRef}><Text color={notice.startsWith("Error:") ? theme.danger : theme.muted}>[Status ^E]</Text></Box>
       <Box ref={mouseButtonRef}><Text color={config.ui.mouse ? theme.warning : theme.muted}>[Mouse {config.ui.mouse ? "on" : "off"} ^T]</Text></Box>
+      <Box ref={modeButtonRef}><Text color={config.permissions.mode === "autonomous" ? theme.warning : theme.muted}>[Mode ^A]</Text></Box>
       <Text color={theme.muted}> Tab panes</Text>
     </Box>
   </Box>;

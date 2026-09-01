@@ -63,9 +63,9 @@ function Overlay({ dimensions, title, query, items, selected, theme, footer, ite
                             itemRefs?.current.delete(absolute); }, children: _jsxs(Text, { color: absolute === selected ? theme.accent : theme.text, inverse: absolute === selected, wrap: "truncate-end", children: [absolute === selected ? " › " : "   ", sanitizeTerminalText(item.label), item.detail ? `  ${sanitizeTerminalText(item.detail)}` : ""] }) }, item.id);
                 }), !items.length && _jsx(Text, { color: theme.muted, children: "No items available." })] }) });
 }
-function ApprovalModal({ dimensions, state, theme, allowRef, denyRef }) {
+function ApprovalModal({ dimensions, state, choice, theme, allowRef, denyRef }) {
     const args = summarizeToolArguments(state.request.activity.args);
-    return _jsxs(Frame, { dimensions: dimensions, title: `APPROVAL REQUIRED · ${state.request.activity.risk.toUpperCase()}`, titleColor: theme.warning, footer: "Y/N/Esc \u00B7 Enter denies safely", children: [_jsx(Text, { bold: true, children: state.request.activity.name }), _jsx(Text, { color: theme.muted, wrap: "wrap", children: args }), _jsx(Text, { children: " " }), _jsxs(Box, { gap: 2, children: [_jsx(Box, { ref: allowRef, children: _jsx(Text, { color: theme.success, children: "[ Allow once ]" }) }), _jsx(Box, { ref: denyRef, children: _jsx(Text, { color: theme.danger, children: "[ Deny ]" }) })] })] });
+    return _jsxs(Frame, { dimensions: dimensions, title: `APPROVAL REQUIRED · ${state.request.activity.risk.toUpperCase()}`, titleColor: theme.warning, footer: "\u2190/\u2192 or Tab to choose, Enter to confirm \u00B7 Y allows \u00B7 N/Esc denies", children: [_jsx(Text, { bold: true, children: state.request.activity.name }), _jsx(Text, { color: theme.muted, wrap: "wrap", children: args }), _jsx(Text, { children: " " }), _jsxs(Box, { gap: 2, children: [_jsx(Box, { ref: allowRef, children: _jsx(Text, { color: theme.success, inverse: choice === "allow", bold: choice === "allow", children: choice === "allow" ? "› [ Allow once ]" : "  [ Allow once ]" }) }), _jsx(Box, { ref: denyRef, children: _jsx(Text, { color: theme.danger, inverse: choice === "deny", bold: choice === "deny", children: choice === "deny" ? "› [ Deny ]" : "  [ Deny ]" }) })] }), _jsx(Text, { children: " " }), _jsx(Text, { color: theme.muted, wrap: "wrap", children: "Mouse clicks need capture mode on (Ctrl+T); the keyboard always works here." })] });
 }
 function KeyEntryModal({ dimensions, name, mode, draft, theme }) {
     return _jsxs(Frame, { dimensions: dimensions, title: mode === "add" ? `NEW PROVIDER · ${name}` : `UPDATE KEY · ${name}`, titleColor: theme.accent, footer: "Enter to save \u00B7 Esc to cancel", children: [_jsx(Text, { color: theme.muted, wrap: "wrap", children: "Paste or type the API key. It is masked here and never added to composer history." }), _jsx(Text, { children: " " }), _jsxs(Text, { color: theme.text, children: ["•".repeat(draft.length), "\u2588"] })] });
@@ -83,6 +83,7 @@ export function ForgeTui({ config }) {
     const [notice, setNotice] = React.useState("Ready");
     const [activities, setActivities] = React.useState([]);
     const [approval, setApproval] = React.useState(null);
+    const [approvalChoice, setApprovalChoice] = React.useState("deny");
     const [keyEntry, setKeyEntry] = React.useState(null);
     const [overlay, setOverlay] = React.useState(null);
     const [overlayQuery, setOverlayQuery] = React.useState("");
@@ -120,6 +121,7 @@ export function ForgeTui({ config }) {
     const sessionsButtonRef = React.useRef(null);
     const helpButtonRef = React.useRef(null);
     const mouseButtonRef = React.useRef(null);
+    const modeButtonRef = React.useRef(null);
     const readerButtonRef = React.useRef(null);
     const statusButtonRef = React.useRef(null);
     const theme = getTheme(config.ui.theme);
@@ -133,6 +135,7 @@ export function ForgeTui({ config }) {
         const value = { request, resolve };
         approvalRef.current = value;
         setApproval(value);
+        setApprovalChoice("deny");
     }), []);
     if (!sessionRef.current) {
         sessionRef.current = new AgentSession({
@@ -238,6 +241,13 @@ export function ForgeTui({ config }) {
             return overlayItems;
         return overlayItems.filter((item) => `${item.label} ${item.detail ?? ""}`.toLowerCase().includes(query));
     }, [overlayItems, overlayQuery]);
+    const cyclePermissionMode = React.useCallback(() => {
+        const order = ["read-only", "balanced", "autonomous"];
+        config.permissions.mode = order[(order.indexOf(config.permissions.mode) + 1) % order.length];
+        saveConfig(config);
+        setNotice(`Permission mode set to ${config.permissions.mode}.`);
+        setRevision((value) => value + 1);
+    }, [config]);
     const closeApproval = React.useCallback((allowed) => {
         const current = approvalRef.current;
         if (!current)
@@ -713,6 +723,10 @@ export function ForgeTui({ config }) {
                 setRevision((value) => value + 1);
                 return;
             }
+            if (containsPoint(metrics(modeButtonRef), mouse.x, mouse.y)) {
+                cyclePermissionMode();
+                return;
+            }
             if (containsPoint(metrics(readerButtonRef), mouse.x, mouse.y)) {
                 openReader();
                 return;
@@ -750,8 +764,12 @@ export function ForgeTui({ config }) {
         if (approval) {
             if (character.toLowerCase() === "y")
                 closeApproval(true);
-            else if (character.toLowerCase() === "n" || key.escape || key.return)
+            else if (character.toLowerCase() === "n" || key.escape)
                 closeApproval(false);
+            else if (key.return)
+                closeApproval(approvalChoice === "allow");
+            else if (key.leftArrow || key.rightArrow || key.tab || key.upArrow || key.downArrow)
+                setApprovalChoice((value) => (value === "allow" ? "deny" : "allow"));
             return;
         }
         if (key.ctrl && character === "c") {
@@ -793,6 +811,10 @@ export function ForgeTui({ config }) {
             saveConfig(config);
             setNotice(config.ui.mouse ? "Mouse capture on — click controls; Shift+drag may select text in supported terminals." : "Mouse capture off — drag to select and copy text normally.");
             setRevision((value) => value + 1);
+            return;
+        }
+        if (key.ctrl && character === "a") {
+            cyclePermissionMode();
             return;
         }
         if (key.ctrl && character === "y") {
@@ -924,11 +946,11 @@ export function ForgeTui({ config }) {
     if (keyEntry)
         return _jsx(KeyEntryModal, { dimensions: dimensions, name: keyEntry.name, mode: keyEntry.mode, draft: keyEntry.draft, theme: theme });
     if (approval)
-        return _jsx(ApprovalModal, { dimensions: dimensions, allowRef: approvalAllowRef, denyRef: approvalDenyRef, state: approval, theme: theme });
+        return _jsx(ApprovalModal, { dimensions: dimensions, allowRef: approvalAllowRef, denyRef: approvalDenyRef, state: approval, choice: approvalChoice, theme: theme });
     if (overlay)
         return _jsx(Overlay, { dimensions: dimensions, itemRefs: overlayItemRefs, title: overlay.toUpperCase(), query: overlayQuery, items: filteredOverlayItems, selected: selected, theme: theme, footer: "Type/filter \u00B7 click or \u2191/\u2193 + Enter \u00B7 wheel scroll \u00B7 Esc close" });
     return _jsxs(Box, { flexDirection: "column", height: dimensions.rows, width: dimensions.columns, children: [_jsxs(Box, { borderStyle: "round", borderColor: theme.focusBorder, paddingX: 1, justifyContent: "space-between", children: [_jsx(Text, { bold: true, color: theme.accent, children: "\u25C6 FORGE" }), _jsxs(Text, { wrap: "truncate-end", children: [sanitizeTerminalText(path.basename(config.permissions.workspaceRoot)), " \u00B7 ", sanitizeTerminalText(config.activeProfile), "/", sanitizeTerminalText(profile.model), " \u00B7 ", profile.kind === "local" ? "● local" : "◉ cloud", " \u00B7 ", config.permissions.mode, config.routing.offline ? " · offline" : ""] })] }), _jsxs(Box, { flexGrow: 1, children: [wide && _jsxs(Box, { ref: activityPaneRef, width: 25, flexDirection: "column", borderStyle: "single", borderColor: focus === "activity" ? theme.focusBorder : theme.border, paddingX: 1, children: [_jsx(Text, { bold: true, color: theme.accent, children: "ACTIVITY" }), activities.slice(0, Math.max(3, dimensions.rows - 10)).map((item, index) => _jsx(Box, { ref: (node) => { if (node)
                                     activityItemRefs.current.set(index, node);
                                 else
-                                    activityItemRefs.current.delete(index); }, children: _jsxs(Text, { inverse: focus === "activity" && index === selectedActivity, color: item.status === "failed" ? theme.danger : item.status === "completed" ? theme.success : theme.warning, wrap: "truncate-end", children: [statusSymbol(item.status), " ", sanitizeTerminalText(item.name), " ", item.durationMs != null ? `${item.durationMs}ms` : ""] }) }, item.id)), !activities.length && _jsx(Text, { color: theme.muted, children: "Tool calls appear here." })] }), _jsxs(Box, { ref: conversationPaneRef, flexGrow: 1, flexDirection: "column", borderStyle: "single", borderColor: focus === "conversation" ? theme.focusBorder : theme.border, paddingX: 1, children: [visibleMessages.map((message, index) => _jsx(MessageBlock, { message: message, theme: theme }, `${message.role}-${index}-${message.content.length}`)), !visibleMessages.length && _jsx(Box, { flexGrow: 1, alignItems: "center", justifyContent: "center", children: _jsx(Text, { color: theme.muted, children: "Ask about this workspace, press Ctrl+K for commands, or Ctrl+M for models." }) })] }), medium && _jsxs(Box, { ref: contextPaneRef, width: wide ? 29 : 25, flexDirection: "column", borderStyle: "single", borderColor: focus === "context" ? theme.focusBorder : theme.border, paddingX: 1, children: [_jsx(Text, { bold: true, color: theme.accent, children: "CONTEXT" }), _jsxs(Text, { wrap: "truncate-end", children: ["Workspace: ", sanitizeTerminalText(path.basename(config.permissions.workspaceRoot))] }), _jsxs(Text, { children: ["Instructions: ", loadProjectInstructions(config.permissions.workspaceRoot).length] }), _jsxs(Text, { children: ["Pinned files: ", contextFilesRef.current.size] }), _jsxs(Text, { children: ["Messages: ", allMessages.length] }), _jsxs(Text, { children: ["Context: ~", estimateMessageTokens(messagesRef.current).toLocaleString("en-US"), " tokens"] }), _jsx(Text, { color: theme.muted, children: "Ctrl+P add files" }), _jsxs(Box, { marginTop: 1, flexDirection: "column", children: [_jsx(Text, { bold: true, color: theme.accent, children: "SESSION" }), _jsx(Text, { children: busy ? "● Working" : "○ Ready" }), _jsx(Text, { wrap: "wrap", color: theme.muted, children: sanitizeTerminalText(notice) })] })] })] }), _jsx(Box, { ref: composerRef, borderStyle: "round", borderColor: busy ? theme.warning : focus === "composer" ? theme.focusBorder : theme.border, paddingX: 1, minHeight: 3, children: _jsx(Text, { color: busy ? theme.warning : theme.text, wrap: "wrap", children: sanitizeTerminalText(busy ? `Working… type to queue · Esc cancel${input ? `\n› ${cursorView}` : ""}` : `› ${cursorView}`) }) }), suggestions.length > 0 && !overlay && _jsxs(Text, { color: theme.muted, children: [" ", suggestions.join("  ")] }), _jsx(Box, { paddingX: 1, justifyContent: "space-between", children: _jsx(Text, { color: limitExceeded ? theme.danger : theme.muted, bold: limitExceeded, wrap: "truncate-end", children: sanitizeTerminalText(usageLine) }) }), queuedPrompt && _jsxs(Text, { color: theme.warning, wrap: "truncate-end", children: [" Queued: ", sanitizeTerminalText(queuedPrompt)] }), _jsxs(Box, { paddingX: 1, gap: 1, children: [_jsx(Box, { ref: commandButtonRef, children: _jsx(Text, { color: theme.muted, children: "[Cmd ^K]" }) }), _jsx(Box, { ref: filesButtonRef, children: _jsx(Text, { color: theme.muted, children: "[Files ^P]" }) }), _jsx(Box, { ref: modelsButtonRef, children: _jsx(Text, { color: theme.muted, children: "[Models ^M]" }) }), _jsx(Box, { ref: sessionsButtonRef, children: _jsx(Text, { color: theme.muted, children: "[Sessions ^S]" }) }), _jsx(Box, { ref: helpButtonRef, children: _jsx(Text, { color: theme.muted, children: "[Help ?]" }) }), _jsx(Box, { ref: readerButtonRef, children: _jsx(Text, { color: theme.muted, children: "[Reader ^Y]" }) }), _jsx(Box, { ref: statusButtonRef, children: _jsx(Text, { color: notice.startsWith("Error:") ? theme.danger : theme.muted, children: "[Status ^E]" }) }), _jsx(Box, { ref: mouseButtonRef, children: _jsxs(Text, { color: config.ui.mouse ? theme.warning : theme.muted, children: ["[Mouse ", config.ui.mouse ? "on" : "off", " ^T]"] }) }), _jsx(Text, { color: theme.muted, children: " Tab panes" })] })] });
+                                    activityItemRefs.current.delete(index); }, children: _jsxs(Text, { inverse: focus === "activity" && index === selectedActivity, color: item.status === "failed" ? theme.danger : item.status === "completed" ? theme.success : theme.warning, wrap: "truncate-end", children: [statusSymbol(item.status), " ", sanitizeTerminalText(item.name), " ", item.durationMs != null ? `${item.durationMs}ms` : ""] }) }, item.id)), !activities.length && _jsx(Text, { color: theme.muted, children: "Tool calls appear here." })] }), _jsxs(Box, { ref: conversationPaneRef, flexGrow: 1, flexDirection: "column", borderStyle: "single", borderColor: focus === "conversation" ? theme.focusBorder : theme.border, paddingX: 1, children: [visibleMessages.map((message, index) => _jsx(MessageBlock, { message: message, theme: theme }, `${message.role}-${index}-${message.content.length}`)), !visibleMessages.length && _jsx(Box, { flexGrow: 1, alignItems: "center", justifyContent: "center", children: _jsx(Text, { color: theme.muted, children: "Ask about this workspace, press Ctrl+K for commands, or Ctrl+M for models." }) })] }), medium && _jsxs(Box, { ref: contextPaneRef, width: wide ? 29 : 25, flexDirection: "column", borderStyle: "single", borderColor: focus === "context" ? theme.focusBorder : theme.border, paddingX: 1, children: [_jsx(Text, { bold: true, color: theme.accent, children: "CONTEXT" }), _jsxs(Text, { wrap: "truncate-end", children: ["Workspace: ", sanitizeTerminalText(path.basename(config.permissions.workspaceRoot))] }), _jsxs(Text, { children: ["Instructions: ", loadProjectInstructions(config.permissions.workspaceRoot).length] }), _jsxs(Text, { children: ["Pinned files: ", contextFilesRef.current.size] }), _jsxs(Text, { children: ["Messages: ", allMessages.length] }), _jsxs(Text, { children: ["Context: ~", estimateMessageTokens(messagesRef.current).toLocaleString("en-US"), " tokens"] }), _jsx(Text, { color: theme.muted, children: "Ctrl+P add files" }), _jsxs(Box, { marginTop: 1, flexDirection: "column", children: [_jsx(Text, { bold: true, color: theme.accent, children: "SESSION" }), _jsx(Text, { children: busy ? "● Working" : "○ Ready" }), _jsx(Text, { wrap: "wrap", color: theme.muted, children: sanitizeTerminalText(notice) })] })] })] }), _jsx(Box, { ref: composerRef, borderStyle: "round", borderColor: busy ? theme.warning : focus === "composer" ? theme.focusBorder : theme.border, paddingX: 1, minHeight: 3, children: _jsx(Text, { color: busy ? theme.warning : theme.text, wrap: "wrap", children: sanitizeTerminalText(busy ? `Working… type to queue · Esc cancel${input ? `\n› ${cursorView}` : ""}` : `› ${cursorView}`) }) }), suggestions.length > 0 && !overlay && _jsxs(Text, { color: theme.muted, children: [" ", suggestions.join("  ")] }), _jsx(Box, { paddingX: 1, justifyContent: "space-between", children: _jsx(Text, { color: limitExceeded ? theme.danger : theme.muted, bold: limitExceeded, wrap: "truncate-end", children: sanitizeTerminalText(usageLine) }) }), queuedPrompt && _jsxs(Text, { color: theme.warning, wrap: "truncate-end", children: [" Queued: ", sanitizeTerminalText(queuedPrompt)] }), _jsxs(Box, { paddingX: 1, gap: 1, children: [_jsx(Box, { ref: commandButtonRef, children: _jsx(Text, { color: theme.muted, children: "[Cmd ^K]" }) }), _jsx(Box, { ref: filesButtonRef, children: _jsx(Text, { color: theme.muted, children: "[Files ^P]" }) }), _jsx(Box, { ref: modelsButtonRef, children: _jsx(Text, { color: theme.muted, children: "[Models ^M]" }) }), _jsx(Box, { ref: sessionsButtonRef, children: _jsx(Text, { color: theme.muted, children: "[Sessions ^S]" }) }), _jsx(Box, { ref: helpButtonRef, children: _jsx(Text, { color: theme.muted, children: "[Help ?]" }) }), _jsx(Box, { ref: readerButtonRef, children: _jsx(Text, { color: theme.muted, children: "[Reader ^Y]" }) }), _jsx(Box, { ref: statusButtonRef, children: _jsx(Text, { color: notice.startsWith("Error:") ? theme.danger : theme.muted, children: "[Status ^E]" }) }), _jsx(Box, { ref: mouseButtonRef, children: _jsxs(Text, { color: config.ui.mouse ? theme.warning : theme.muted, children: ["[Mouse ", config.ui.mouse ? "on" : "off", " ^T]"] }) }), _jsx(Box, { ref: modeButtonRef, children: _jsx(Text, { color: config.permissions.mode === "autonomous" ? theme.warning : theme.muted, children: "[Mode ^A]" }) }), _jsx(Text, { color: theme.muted, children: " Tab panes" })] })] });
 }
