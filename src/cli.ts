@@ -34,8 +34,9 @@ async function startInteractive(): Promise<void> {
   if (!shouldLaunchTui({ inputIsTTY: process.stdin.isTTY, outputIsTTY: process.stdout.isTTY, columns: process.stdout.columns, rows: process.stdout.rows })) {
     throw new Error("Forge's interactive workspace needs a real terminal at least 72x18. Resize your terminal, or use `forge run \"<prompt>\"` for non-interactive use.");
   }
-  const { startTui } = await import("./tui.js");
-  await startTui(config);
+  const tui = await import("./tui.js");
+  registerTuiModule(tui);
+  await tui.startTui(config);
 }
 
 async function runPrompt(prompt: string, options: { json?: boolean; model?: string; offline?: boolean }): Promise<void> {
@@ -283,6 +284,20 @@ export async function runCli(argv = process.argv): Promise<void> {
 }
 
 export function reportCliError(error: unknown): never {
+  // If the TUI is (or was) running in alternate-screen/raw mode, restore the
+  // terminal before printing — otherwise a crash mid-session leaves the
+  // alternate screen's last frame on screen with the cursor hidden and raw
+  // mode still engaged, which looks like the whole terminal broke even after
+  // the process is gone.
+  if (tuiModule) tuiModule.unmountActiveTui();
   printError(error instanceof Error ? error.message : String(error));
   process.exit(1);
+}
+
+// Loaded lazily (and only once) so `forge run`/non-TUI commands never pull in
+// Ink; populated by cli.ts's own dynamic import of ./tui.js for the
+// interactive path.
+let tuiModule: typeof import("./tui.js") | undefined;
+export function registerTuiModule(module: typeof import("./tui.js")): void {
+  tuiModule = module;
 }
