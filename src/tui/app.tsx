@@ -32,6 +32,24 @@ interface ApprovalState { request: ApprovalRequest; resolve: (allowed: boolean) 
 type TuiFocus = "activity" | "conversation" | "context" | "composer";
 interface ReaderState { title: string; content: string }
 
+// A paste this size or larger would make Ink re-wrap and redraw a multi-thousand-
+// character single line on every keystroke, which is slow enough to visibly
+// corrupt the terminal frame. Collapse it to a placeholder instead.
+const PASTE_COLLAPSE_THRESHOLD = 400;
+const MAX_PASTE_CHARS = 2_000_000;
+
+export function pastePlaceholder(id: number, content: string): string {
+  const lines = content.split("\n").length;
+  return `[Pasted ${content.length.toLocaleString("en-US")} chars, ${lines} line${lines === 1 ? "" : "s"} #${id}]`;
+}
+
+/** Replace every known paste placeholder in `value` with its stored full content. */
+export function expandPastedBlocks(value: string, blocks: Map<string, string>): string {
+  let result = value;
+  for (const [token, content] of blocks) result = result.split(token).join(content);
+  return result;
+}
+
 function systemMessages(config: ForgeConfig): ChatMessage[] {
   const instructions = loadProjectInstructions(config.permissions.workspaceRoot)
     .map((item) => `\n\n[${item.file}]\n${item.content}`).join("");
@@ -167,6 +185,8 @@ export function ForgeTui({ config }: { config: ForgeConfig }): React.ReactElemen
   });
   const [pricing, setPricing] = React.useState<ModelInfo | undefined>();
   const contextFilesRef = React.useRef(new Map<string, string>());
+  const pastedBlocksRef = React.useRef(new Map<string, string>());
+  const pasteCounterRef = React.useRef(0);
   const approvalRef = React.useRef<ApprovalState | null>(null);
   const queuedPromptRef = React.useRef("");
   const operationAbortRef = React.useRef<AbortController | null>(null);
@@ -359,8 +379,10 @@ export function ForgeTui({ config }: { config: ForgeConfig }): React.ReactElemen
   }, [config]);
 
   const submit = React.useCallback(async () => {
-    const value = input.trim();
-    if (!value) return;
+    const trimmed = input.trim();
+    if (!trimmed) return;
+    const value = expandPastedBlocks(trimmed, pastedBlocksRef.current);
+    pastedBlocksRef.current.clear();
     setInput(""); setCursor(0); setScrollOffset(0);
     if (busy) {
       queuedPromptRef.current = value;
@@ -712,6 +734,16 @@ export function ForgeTui({ config }: { config: ForgeConfig }): React.ReactElemen
       return;
     }
     if (!key.ctrl && !key.meta && character) {
+      if (character.length > PASTE_COLLAPSE_THRESHOLD) {
+        const content = character.length > MAX_PASTE_CHARS ? `${character.slice(0, MAX_PASTE_CHARS)}\n[…truncated, pasted content exceeded ${MAX_PASTE_CHARS.toLocaleString("en-US")} characters]` : character;
+        const token = pastePlaceholder(++pasteCounterRef.current, content);
+        pastedBlocksRef.current.set(token, content);
+        setInput((value) => value.slice(0, cursor) + token + value.slice(cursor));
+        setCursor((value) => value + token.length);
+        setNotice(`Pasted ${content.length.toLocaleString("en-US")} characters — kept as a placeholder so the composer stays responsive.`);
+        setRevision((value) => value + 1);
+        return;
+      }
       setInput((value) => value.slice(0, cursor) + character + value.slice(cursor));
       setCursor((value) => value + character.length);
     }

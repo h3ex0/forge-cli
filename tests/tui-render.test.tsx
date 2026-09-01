@@ -10,7 +10,7 @@ vi.mock("../src/runtime/service.js", async (importOriginal) => {
 });
 
 import { migrateConfig } from "../src/config.js";
-import { ForgeTui } from "../src/tui/app.js";
+import { expandPastedBlocks, ForgeTui, pastePlaceholder } from "../src/tui/app.js";
 
 describe("Forge TUI rendering", () => {
   it("renders the workspace shell and token status without a provider call", async () => {
@@ -57,5 +57,38 @@ describe("Forge TUI rendering", () => {
     await instance.waitUntilExit();
 
     expect(output).toContain("· autonomous");
+  });
+
+  it("collapses a large paste into a placeholder instead of rendering it inline", async () => {
+    const stdout = new PassThrough() as unknown as NodeJS.WriteStream;
+    const stderr = new PassThrough() as unknown as NodeJS.WriteStream;
+    const stdin = new PassThrough() as unknown as NodeJS.ReadStream;
+    Object.assign(stdout, { columns: 120, rows: 30, isTTY: false });
+    Object.assign(stdin, { isTTY: true, setRawMode: vi.fn(), ref: vi.fn(), unref: vi.fn() });
+    let output = "";
+    stdout.on("data", (chunk) => { output += chunk.toString(); });
+    const config = migrateConfig({ activeProfile: "test", profiles: { test: { baseURL: "https://example.test", apiKey: "", format: "openai", model: "qwen" } } });
+
+    const instance = render(React.createElement(ForgeTui, { config }), { stdout, stderr, stdin, interactive: false, patchConsole: false });
+    await instance.waitUntilRenderFlush();
+    output = "";
+    const hugePaste = "x".repeat(5000);
+    stdin.write(hugePaste);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    instance.unmount();
+    await instance.waitUntilExit();
+
+    expect(output).toContain("[Pasted 5,000 chars, 1 line #1]");
+    expect(output).not.toContain(hugePaste);
+  });
+
+  it("expands paste placeholders back to their full content before sending", () => {
+    const blocks = new Map<string, string>();
+    const content = "line one\nline two\nline three";
+    const token = pastePlaceholder(1, content);
+    blocks.set(token, content);
+
+    expect(expandPastedBlocks(`Please review: ${token}`, blocks)).toBe(`Please review: ${content}`);
+    expect(expandPastedBlocks("no placeholder here", blocks)).toBe("no placeholder here");
   });
 });
