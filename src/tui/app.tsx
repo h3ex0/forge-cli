@@ -55,40 +55,59 @@ function MessageBlock({ message, theme }: { message: ChatMessage; theme: ReturnT
   </Box>;
 }
 
-function Overlay({ title, query, items, selected, theme, footer, boxRef, itemRefs }: { title: string; query: string; items: SelectItem[]; selected: number; theme: ReturnType<typeof getTheme>; footer: string; boxRef?: React.Ref<DOMElement>; itemRefs?: React.MutableRefObject<Map<number, DOMElement>> }): React.ReactElement {
-  const start = Math.max(0, selected - 6);
-  return <Box ref={boxRef} position="absolute" width="82%" minHeight={8} alignSelf="center" marginTop={2} flexDirection="column" borderStyle="double" borderColor={theme.focusBorder} paddingX={2} paddingY={1}>
-    <Text bold color={theme.accent}>{title}</Text>
-    <Text color={theme.text}>Search: {sanitizeTerminalText(query)}█</Text>
-    <Text color={theme.muted}>{"─".repeat(54)}</Text>
-    {items.slice(start, start + 13).map((item, index) => {
-      const absolute = start + index;
-      return <Box key={item.id} ref={(node) => { if (node) itemRefs?.current.set(absolute, node); else itemRefs?.current.delete(absolute); }}><Text color={absolute === selected ? theme.accent : theme.text} inverse={absolute === selected}>
-        {absolute === selected ? " › " : "   "}{sanitizeTerminalText(item.label)}{item.detail ? `  ${sanitizeTerminalText(item.detail)}` : ""}
-      </Text></Box>;
-    })}
-    {!items.length && <Text color={theme.muted}>No items available.</Text>}
-    <Text color={theme.muted}>{footer}</Text>
+interface FrameDimensions { columns: number; rows: number }
+
+/**
+ * Full-screen frame shell shared by every modal-like view (overlay lists,
+ * approval, key entry, the reader). Replacing the chat view outright — rather
+ * than layering a partially-transparent box on top of it — is deliberate:
+ * Ink has no real background fill, so a floating box over live content lets
+ * conversation text bleed through the gaps and around the edges, which reads
+ * as visual noise stacked on top of the modal's own text.
+ */
+function Frame({ dimensions, title, titleColor, footer, children }: { dimensions: FrameDimensions; title: string; titleColor?: string; footer?: string; children: React.ReactNode }): React.ReactElement {
+  return <Box flexDirection="column" height={dimensions.rows} width={dimensions.columns} paddingX={2} paddingY={1}>
+    <Text bold inverse color={titleColor}> {title} </Text>
+    <Text> </Text>
+    <Box flexDirection="column" flexGrow={1}>{children}</Box>
+    {footer && <Text color="gray">{footer}</Text>}
   </Box>;
 }
 
-function ApprovalModal({ state, theme, boxRef, allowRef, denyRef }: { state: ApprovalState; theme: ReturnType<typeof getTheme>; boxRef?: React.Ref<DOMElement>; allowRef?: React.Ref<DOMElement>; denyRef?: React.Ref<DOMElement> }): React.ReactElement {
+function Overlay({ dimensions, title, query, items, selected, theme, footer, itemRefs }: { dimensions: FrameDimensions; title: string; query: string; items: SelectItem[]; selected: number; theme: ReturnType<typeof getTheme>; footer: string; itemRefs?: React.MutableRefObject<Map<number, DOMElement>> }): React.ReactElement {
+  const visibleCount = Math.max(6, dimensions.rows - 9);
+  const start = Math.max(0, Math.min(selected - Math.floor(visibleCount / 2), Math.max(0, items.length - visibleCount)));
+  return <Frame dimensions={dimensions} title={`FORGE · ${title}`} titleColor={theme.accent} footer={footer}>
+    <Box flexDirection="column" flexGrow={1}>
+      <Text color={theme.text}>Search: {sanitizeTerminalText(query)}█</Text>
+      <Text color={theme.muted}>{"─".repeat(Math.min(70, dimensions.columns - 4))}</Text>
+      {items.slice(start, start + visibleCount).map((item, index) => {
+        const absolute = start + index;
+        return <Box key={item.id} ref={(node) => { if (node) itemRefs?.current.set(absolute, node); else itemRefs?.current.delete(absolute); }}><Text color={absolute === selected ? theme.accent : theme.text} inverse={absolute === selected} wrap="truncate-end">
+          {absolute === selected ? " › " : "   "}{sanitizeTerminalText(item.label)}{item.detail ? `  ${sanitizeTerminalText(item.detail)}` : ""}
+        </Text></Box>;
+      })}
+      {!items.length && <Text color={theme.muted}>No items available.</Text>}
+    </Box>
+  </Frame>;
+}
+
+function ApprovalModal({ dimensions, state, theme, allowRef, denyRef }: { dimensions: FrameDimensions; state: ApprovalState; theme: ReturnType<typeof getTheme>; allowRef?: React.Ref<DOMElement>; denyRef?: React.Ref<DOMElement> }): React.ReactElement {
   const args = summarizeToolArguments(state.request.activity.args);
-  return <Box ref={boxRef} position="absolute" width="86%" alignSelf="center" marginTop={2} flexDirection="column" borderStyle="double" borderColor={theme.warning} paddingX={2} paddingY={1}>
-    <Text bold color={theme.warning}>APPROVAL REQUIRED · {state.request.activity.risk.toUpperCase()}</Text>
+  return <Frame dimensions={dimensions} title={`APPROVAL REQUIRED · ${state.request.activity.risk.toUpperCase()}`} titleColor={theme.warning} footer="Y/N/Esc · Enter denies safely">
     <Text bold>{state.request.activity.name}</Text>
-    <Text color={theme.muted} wrap="truncate-end">{args}</Text>
-    <Box gap={2}><Box ref={allowRef}><Text color={theme.success}>[ Allow once ]</Text></Box><Box ref={denyRef}><Text color={theme.danger}>[ Deny ]</Text></Box><Text color={theme.warning}>Y/N/Esc · Enter denies safely</Text></Box>
-  </Box>;
+    <Text color={theme.muted} wrap="wrap">{args}</Text>
+    <Text> </Text>
+    <Box gap={2}><Box ref={allowRef}><Text color={theme.success}>[ Allow once ]</Text></Box><Box ref={denyRef}><Text color={theme.danger}>[ Deny ]</Text></Box></Box>
+  </Frame>;
 }
 
-function KeyEntryModal({ name, mode, draft, theme }: { name: string; mode: "add" | "update"; draft: string; theme: ReturnType<typeof getTheme> }): React.ReactElement {
-  return <Box position="absolute" width="70%" alignSelf="center" marginTop={2} flexDirection="column" borderStyle="double" borderColor={theme.accent} paddingX={2} paddingY={1}>
-    <Text bold color={theme.accent}>{mode === "add" ? `NEW PROVIDER · ${name}` : `UPDATE KEY · ${name}`}</Text>
-    <Text color={theme.muted}>Paste or type the API key. It is masked here and never added to composer history.</Text>
+function KeyEntryModal({ dimensions, name, mode, draft, theme }: { dimensions: FrameDimensions; name: string; mode: "add" | "update"; draft: string; theme: ReturnType<typeof getTheme> }): React.ReactElement {
+  return <Frame dimensions={dimensions} title={mode === "add" ? `NEW PROVIDER · ${name}` : `UPDATE KEY · ${name}`} titleColor={theme.accent} footer="Enter to save · Esc to cancel">
+    <Text color={theme.muted} wrap="wrap">Paste or type the API key. It is masked here and never added to composer history.</Text>
+    <Text> </Text>
     <Text color={theme.text}>{"•".repeat(draft.length)}█</Text>
-    <Text color={theme.muted}>Enter to save · Esc to cancel</Text>
-  </Box>;
+  </Frame>;
 }
 
 /** Render Forge's responsive, keyboard-first full-screen terminal workspace. */
@@ -131,8 +150,6 @@ export function ForgeTui({ config }: { config: ForgeConfig }): React.ReactElemen
   const conversationPaneRef = React.useRef<DOMElement>(null!);
   const contextPaneRef = React.useRef<DOMElement>(null!);
   const composerRef = React.useRef<DOMElement>(null!);
-  const overlayRef = React.useRef<DOMElement>(null!);
-  const approvalBoxRef = React.useRef<DOMElement>(null!);
   const approvalAllowRef = React.useRef<DOMElement>(null!);
   const approvalDenyRef = React.useRef<DOMElement>(null!);
   const overlayItemRefs = React.useRef(new Map<number, DOMElement>());
@@ -516,7 +533,6 @@ export function ForgeTui({ config }: { config: ForgeConfig }): React.ReactElemen
           for (const [index, node] of overlayItemRefs.current) {
             if (containsPoint(measureElement(node), mouse.x, mouse.y)) { setSelected(index); selectOverlayItem(index); return; }
           }
-          if (!containsPoint(metrics(overlayRef), mouse.x, mouse.y)) setOverlay(null);
         }
         return;
       }
@@ -652,6 +668,12 @@ export function ForgeTui({ config }: { config: ForgeConfig }): React.ReactElemen
     </Box>;
   }
 
+  // Each of these takes over the whole screen while active, then returns to
+  // the chat view below once dismissed — see the Frame component for why.
+  if (keyEntry) return <KeyEntryModal dimensions={dimensions} name={keyEntry.name} mode={keyEntry.mode} draft={keyEntry.draft} theme={theme} />;
+  if (approval) return <ApprovalModal dimensions={dimensions} allowRef={approvalAllowRef} denyRef={approvalDenyRef} state={approval} theme={theme} />;
+  if (overlay) return <Overlay dimensions={dimensions} itemRefs={overlayItemRefs} title={overlay.toUpperCase()} query={overlayQuery} items={filteredOverlayItems} selected={selected} theme={theme} footer="Type/filter · click or ↑/↓ + Enter · wheel scroll · Esc close" />;
+
   return <Box flexDirection="column" height={dimensions.rows} width={dimensions.columns}>
     <Box borderStyle="round" borderColor={theme.focusBorder} paddingX={1} justifyContent="space-between">
       <Text bold color={theme.accent}>◆ FORGE</Text>
@@ -703,9 +725,5 @@ export function ForgeTui({ config }: { config: ForgeConfig }): React.ReactElemen
       <Box ref={mouseButtonRef}><Text color={config.ui.mouse ? theme.warning : theme.muted}>[Mouse {config.ui.mouse ? "on" : "off"} ^T]</Text></Box>
       <Text color={theme.muted}> Tab panes</Text>
     </Box>
-
-    {overlay && <Overlay boxRef={overlayRef} itemRefs={overlayItemRefs} title={overlay.toUpperCase()} query={overlayQuery} items={filteredOverlayItems} selected={selected} theme={theme} footer="Type/filter · click or ↑/↓ + Enter · wheel scroll · Esc close" />}
-    {approval && <ApprovalModal boxRef={approvalBoxRef} allowRef={approvalAllowRef} denyRef={approvalDenyRef} state={approval} theme={theme} />}
-    {keyEntry && <KeyEntryModal name={keyEntry.name} mode={keyEntry.mode} draft={keyEntry.draft} theme={theme} />}
   </Box>;
 }
