@@ -156,6 +156,8 @@ export function ForgeTui({ config }) {
     const pasteCounterRef = React.useRef(0);
     const approvalRef = React.useRef(null);
     const queuedPromptRef = React.useRef("");
+    const streamBufferRef = React.useRef("");
+    const streamFlushTimerRef = React.useRef(null);
     const operationAbortRef = React.useRef(null);
     const messagesRef = React.useRef(systemMessages(config));
     const sessionRef = React.useRef(null);
@@ -215,44 +217,78 @@ export function ForgeTui({ config }) {
         stdout.on("resize", resize);
         return () => { stdout.off("resize", resize); };
     }, [stdout]);
-    React.useEffect(() => session.subscribe((event) => {
-        if (event.type === "turn.started") {
-            setBusy(true);
-            setStreamText("");
-            setNotice("Thinking…");
-            setRevision((value) => value + 1);
+    const clearStreamBuffer = React.useCallback(() => {
+        if (streamFlushTimerRef.current) {
+            clearTimeout(streamFlushTimerRef.current);
+            streamFlushTimerRef.current = null;
         }
-        else if (event.type === "text.delta")
-            setStreamText((value) => value + event.delta);
-        else if (event.type === "message.completed") {
-            setStreamText("");
-            saveSession("autosave", messagesRef.current);
-            setRevision((value) => value + 1);
-        }
-        else if (event.type === "tool.requested")
-            setActivities((items) => [event.activity, ...items.filter((item) => item.id !== event.activity.id)].slice(0, 20));
-        else if (event.type === "tool.updated")
-            setActivities((items) => [event.activity, ...items.filter((item) => item.id !== event.activity.id)].slice(0, 20));
-        else if (event.type === "usage.updated") {
-            setUsage({ ...event.usage });
-            const entry = loadUsageLedger().profiles[config.activeProfile];
-            setSubscriptionTokensUsed(entry ? entry.promptTokens + entry.completionTokens : 0);
-        }
-        else if (event.type === "turn.failed") {
-            setBusy(false);
-            setNotice(`Error: ${sanitizeTerminalText(event.error.message)}`);
-        }
-        else if (event.type === "turn.cancelled") {
-            setBusy(false);
-            setNotice("Cancelled");
-        }
-        else if (event.type === "turn.completed") {
-            setBusy(false);
-            setNotice("Ready");
-            setRevision((value) => value + 1);
-            flushQueuedPrompt();
-        }
-    }), [flushQueuedPrompt, session]);
+        streamBufferRef.current = "";
+    }, []);
+    React.useEffect(() => {
+        const unsubscribe = session.subscribe((event) => {
+            if (event.type === "turn.started") {
+                clearStreamBuffer();
+                setBusy(true);
+                setStreamText("");
+                setNotice("Thinking…");
+                setRevision((value) => value + 1);
+            }
+            else if (event.type === "text.delta") {
+                // A fast provider can emit far more deltas per second than the terminal
+                // can usefully redraw; batch them into one state update roughly every
+                // 50ms instead of re-rendering (and regenerating/writing the full
+                // frame) on every single token.
+                streamBufferRef.current += event.delta;
+                if (!streamFlushTimerRef.current) {
+                    streamFlushTimerRef.current = setTimeout(() => {
+                        streamFlushTimerRef.current = null;
+                        const pending = streamBufferRef.current;
+                        streamBufferRef.current = "";
+                        if (pending)
+                            setStreamText((value) => value + pending);
+                    }, 50);
+                }
+            }
+            else if (event.type === "message.completed") {
+                clearStreamBuffer();
+                setStreamText("");
+                saveSession("autosave", messagesRef.current);
+                setRevision((value) => value + 1);
+            }
+            else if (event.type === "tool.requested")
+                setActivities((items) => [event.activity, ...items.filter((item) => item.id !== event.activity.id)].slice(0, 20));
+            else if (event.type === "tool.updated")
+                setActivities((items) => [event.activity, ...items.filter((item) => item.id !== event.activity.id)].slice(0, 20));
+            else if (event.type === "usage.updated") {
+                setUsage({ ...event.usage });
+                const entry = loadUsageLedger().profiles[config.activeProfile];
+                setSubscriptionTokensUsed(entry ? entry.promptTokens + entry.completionTokens : 0);
+            }
+            else if (event.type === "turn.failed") {
+                const pending = streamBufferRef.current;
+                clearStreamBuffer();
+                if (pending)
+                    setStreamText((value) => value + pending);
+                setBusy(false);
+                setNotice(`Error: ${sanitizeTerminalText(event.error.message)}`);
+            }
+            else if (event.type === "turn.cancelled") {
+                const pending = streamBufferRef.current;
+                clearStreamBuffer();
+                if (pending)
+                    setStreamText((value) => value + pending);
+                setBusy(false);
+                setNotice("Cancelled");
+            }
+            else if (event.type === "turn.completed") {
+                setBusy(false);
+                setNotice("Ready");
+                setRevision((value) => value + 1);
+                flushQueuedPrompt();
+            }
+        });
+        return () => { unsubscribe(); clearStreamBuffer(); };
+    }, [clearStreamBuffer, flushQueuedPrompt, session]);
     React.useEffect(() => {
         fetchModels(config.profiles[config.activeProfile]).then((models) => {
             setPricing(models.find((model) => model.id === config.profiles[config.activeProfile].model));
@@ -1105,5 +1141,5 @@ export function ForgeTui({ config }) {
     return _jsxs(Box, { flexDirection: "column", height: dimensions.rows, width: dimensions.columns, children: [_jsxs(Box, { borderStyle: "round", borderColor: theme.focusBorder, paddingX: 1, children: [_jsx(Box, { flexShrink: 0, children: _jsx(Text, { bold: true, color: theme.accent, children: "\u25C6 FORGE" }) }), _jsx(Box, { flexGrow: 1, flexShrink: 1, minWidth: 0, justifyContent: "flex-end", children: _jsxs(Text, { wrap: "truncate-end", children: [" ", sanitizeTerminalText(path.basename(config.permissions.workspaceRoot)), " \u00B7 ", sanitizeTerminalText(config.activeProfile), "/", sanitizeTerminalText(profile.model), " \u00B7 ", profile.kind === "local" ? "● local" : "◉ cloud", " \u00B7 ", config.permissions.mode, config.routing.offline ? " · offline" : ""] }) })] }), _jsxs(Box, { flexGrow: 1, flexShrink: 1, flexBasis: 0, overflow: "hidden", children: [wide && _jsxs(Box, { ref: activityPaneRef, width: 25, flexShrink: 0, flexDirection: "column", overflow: "hidden", borderStyle: "single", borderColor: focus === "activity" ? theme.focusBorder : theme.border, paddingX: 1, children: [_jsx(Text, { bold: true, color: theme.accent, children: "ACTIVITY" }), activities.slice(0, Math.max(3, dimensions.rows - 10)).map((item, index) => _jsx(Box, { ref: (node) => { if (node)
                                     activityItemRefs.current.set(index, node);
                                 else
-                                    activityItemRefs.current.delete(index); }, children: _jsxs(Text, { inverse: focus === "activity" && index === selectedActivity, color: item.status === "failed" ? theme.danger : item.status === "completed" ? theme.success : theme.warning, wrap: "truncate-end", children: [statusSymbol(item.status), " ", sanitizeTerminalText(item.name), " ", item.durationMs != null ? `${item.durationMs}ms` : ""] }) }, item.id)), !activities.length && _jsx(Text, { color: theme.muted, children: "Tool calls appear here." })] }), _jsxs(Box, { ref: conversationPaneRef, flexGrow: 1, flexShrink: 1, flexBasis: 0, flexDirection: "column", overflow: "hidden", borderStyle: "single", borderColor: focus === "conversation" ? theme.focusBorder : theme.border, paddingX: 1, children: [visibleMessages.map((message, index) => _jsx(MessageBlock, { message: message, theme: theme, maxLines: messageMaxLines, paneWidth: conversationPaneWidth }, `${message.role}-${index}-${message.content.length}`)), !visibleMessages.length && _jsx(Box, { flexGrow: 1, alignItems: "center", justifyContent: "center", children: _jsx(Text, { color: theme.muted, children: "Ask about this workspace, press Ctrl+K for commands, or Ctrl+M for models." }) })] }), medium && _jsxs(Box, { ref: contextPaneRef, width: wide ? 29 : 25, flexShrink: 0, flexDirection: "column", overflow: "hidden", borderStyle: "single", borderColor: focus === "context" ? theme.focusBorder : theme.border, paddingX: 1, children: [_jsx(Text, { bold: true, color: theme.accent, children: "CONTEXT" }), _jsxs(Text, { wrap: "truncate-end", children: ["Workspace: ", sanitizeTerminalText(path.basename(config.permissions.workspaceRoot))] }), _jsxs(Text, { children: ["Instructions: ", loadProjectInstructions(config.permissions.workspaceRoot).length] }), _jsxs(Text, { children: ["Pinned files: ", contextFilesRef.current.size] }), _jsxs(Text, { children: ["Messages: ", allMessages.length] }), _jsxs(Text, { children: ["Context: ~", estimateMessageTokens(messagesRef.current).toLocaleString("en-US"), " tokens"] }), _jsx(Text, { color: theme.muted, children: "Ctrl+P add files" }), _jsxs(Box, { marginTop: 1, flexDirection: "column", children: [_jsx(Text, { bold: true, color: theme.accent, children: "SESSION" }), _jsx(Text, { children: busy ? "● Working" : "○ Ready" }), _jsx(Text, { wrap: "wrap", color: theme.muted, children: sanitizeTerminalText(notice) })] })] })] }), _jsx(Box, { ref: composerRef, borderStyle: "round", borderColor: busy ? theme.warning : focus === "composer" ? theme.focusBorder : theme.border, paddingX: 1, minHeight: 3, children: _jsx(Text, { color: busy ? theme.warning : theme.text, wrap: "wrap", children: sanitizeTerminalText(busy ? `Working… type to queue · Esc cancel${input ? `\n› ${cursorView}` : ""}` : `› ${cursorView}`) }) }), suggestions.length > 0 && !overlay && _jsxs(Text, { color: theme.muted, children: [" ", suggestions.join("  ")] }), _jsx(Box, { paddingX: 1, overflow: "hidden", children: _jsx(Text, { color: limitExceeded ? theme.danger : theme.muted, bold: limitExceeded, wrap: "truncate-end", children: sanitizeTerminalText(usageLine) }) }), queuedPrompt && _jsxs(Text, { color: theme.warning, wrap: "truncate-end", children: [" Queued: ", sanitizeTerminalText(queuedPrompt)] }), _jsxs(Box, { paddingX: 1, gap: 1, overflow: "hidden", children: [_jsx(Box, { ref: commandButtonRef, children: _jsx(Text, { color: theme.muted, children: "[Cmd ^K]" }) }), _jsx(Box, { ref: filesButtonRef, children: _jsx(Text, { color: theme.muted, children: "[Files ^P]" }) }), _jsx(Box, { ref: modelsButtonRef, children: _jsx(Text, { color: theme.muted, children: "[Models ^M]" }) }), _jsx(Box, { ref: sessionsButtonRef, children: _jsx(Text, { color: theme.muted, children: "[Sessions ^S]" }) }), _jsx(Box, { ref: helpButtonRef, children: _jsx(Text, { color: theme.muted, children: "[Help ?]" }) }), _jsx(Box, { ref: readerButtonRef, children: _jsx(Text, { color: theme.muted, children: "[Reader ^Y]" }) }), _jsx(Box, { ref: statusButtonRef, children: _jsx(Text, { color: notice.startsWith("Error:") ? theme.danger : theme.muted, children: "[Status ^E]" }) }), _jsx(Box, { ref: mouseButtonRef, children: _jsxs(Text, { color: config.ui.mouse ? theme.warning : theme.muted, children: ["[Mouse ", config.ui.mouse ? "on" : "off", " ^T]"] }) }), _jsx(Box, { ref: modeButtonRef, children: _jsx(Text, { color: config.permissions.mode === "autonomous" ? theme.warning : theme.muted, children: "[Mode ^A]" }) }), _jsx(Text, { color: theme.muted, children: " Tab panes" })] })] });
+                                    activityItemRefs.current.delete(index); }, children: _jsxs(Text, { inverse: focus === "activity" && index === selectedActivity, color: item.status === "failed" ? theme.danger : item.status === "completed" ? theme.success : theme.warning, wrap: "truncate-end", children: [statusSymbol(item.status), " ", sanitizeTerminalText(item.name), " ", item.durationMs != null ? `${item.durationMs}ms` : ""] }) }, item.id)), !activities.length && _jsx(Text, { color: theme.muted, children: "Tool calls appear here." })] }), _jsxs(Box, { ref: conversationPaneRef, flexGrow: 1, flexShrink: 1, flexBasis: 0, flexDirection: "column", overflow: "hidden", borderStyle: "single", borderColor: focus === "conversation" ? theme.focusBorder : theme.border, paddingX: 1, children: [visibleMessages.map((message, index) => _jsx(MessageBlock, { message: message, theme: theme, maxLines: messageMaxLines, paneWidth: conversationPaneWidth }, `${message.role}-${index}`)), !visibleMessages.length && _jsx(Box, { flexGrow: 1, alignItems: "center", justifyContent: "center", children: _jsx(Text, { color: theme.muted, children: "Ask about this workspace, press Ctrl+K for commands, or Ctrl+M for models." }) })] }), medium && _jsxs(Box, { ref: contextPaneRef, width: wide ? 29 : 25, flexShrink: 0, flexDirection: "column", overflow: "hidden", borderStyle: "single", borderColor: focus === "context" ? theme.focusBorder : theme.border, paddingX: 1, children: [_jsx(Text, { bold: true, color: theme.accent, children: "CONTEXT" }), _jsxs(Text, { wrap: "truncate-end", children: ["Workspace: ", sanitizeTerminalText(path.basename(config.permissions.workspaceRoot))] }), _jsxs(Text, { children: ["Instructions: ", loadProjectInstructions(config.permissions.workspaceRoot).length] }), _jsxs(Text, { children: ["Pinned files: ", contextFilesRef.current.size] }), _jsxs(Text, { children: ["Messages: ", allMessages.length] }), _jsxs(Text, { children: ["Context: ~", estimateMessageTokens(messagesRef.current).toLocaleString("en-US"), " tokens"] }), _jsx(Text, { color: theme.muted, children: "Ctrl+P add files" }), _jsxs(Box, { marginTop: 1, flexDirection: "column", children: [_jsx(Text, { bold: true, color: theme.accent, children: "SESSION" }), _jsx(Text, { children: busy ? "● Working" : "○ Ready" }), _jsx(Text, { wrap: "wrap", color: theme.muted, children: sanitizeTerminalText(notice) })] })] })] }), _jsx(Box, { ref: composerRef, borderStyle: "round", borderColor: busy ? theme.warning : focus === "composer" ? theme.focusBorder : theme.border, paddingX: 1, minHeight: 3, children: _jsx(Text, { color: busy ? theme.warning : theme.text, wrap: "wrap", children: sanitizeTerminalText(busy ? `Working… type to queue · Esc cancel${input ? `\n› ${cursorView}` : ""}` : `› ${cursorView}`) }) }), suggestions.length > 0 && !overlay && _jsxs(Text, { color: theme.muted, children: [" ", suggestions.join("  ")] }), _jsx(Box, { paddingX: 1, overflow: "hidden", children: _jsx(Text, { color: limitExceeded ? theme.danger : theme.muted, bold: limitExceeded, wrap: "truncate-end", children: sanitizeTerminalText(usageLine) }) }), queuedPrompt && _jsxs(Text, { color: theme.warning, wrap: "truncate-end", children: [" Queued: ", sanitizeTerminalText(queuedPrompt)] }), _jsxs(Box, { paddingX: 1, gap: 1, overflow: "hidden", children: [_jsx(Box, { ref: commandButtonRef, children: _jsx(Text, { color: theme.muted, children: "[Cmd ^K]" }) }), _jsx(Box, { ref: filesButtonRef, children: _jsx(Text, { color: theme.muted, children: "[Files ^P]" }) }), _jsx(Box, { ref: modelsButtonRef, children: _jsx(Text, { color: theme.muted, children: "[Models ^M]" }) }), _jsx(Box, { ref: sessionsButtonRef, children: _jsx(Text, { color: theme.muted, children: "[Sessions ^S]" }) }), _jsx(Box, { ref: helpButtonRef, children: _jsx(Text, { color: theme.muted, children: "[Help ?]" }) }), _jsx(Box, { ref: readerButtonRef, children: _jsx(Text, { color: theme.muted, children: "[Reader ^Y]" }) }), _jsx(Box, { ref: statusButtonRef, children: _jsx(Text, { color: notice.startsWith("Error:") ? theme.danger : theme.muted, children: "[Status ^E]" }) }), _jsx(Box, { ref: mouseButtonRef, children: _jsxs(Text, { color: config.ui.mouse ? theme.warning : theme.muted, children: ["[Mouse ", config.ui.mouse ? "on" : "off", " ^T]"] }) }), _jsx(Box, { ref: modeButtonRef, children: _jsx(Text, { color: config.permissions.mode === "autonomous" ? theme.warning : theme.muted, children: "[Mode ^A]" }) }), _jsx(Text, { color: theme.muted, children: " Tab panes" })] })] });
 }

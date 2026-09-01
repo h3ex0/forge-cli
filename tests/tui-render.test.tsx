@@ -11,11 +11,14 @@ vi.mock("../src/runtime/service.js", async (importOriginal) => {
   const original = await importOriginal<typeof import("../src/runtime/service.js")>();
   return { ...original, listRuntimeSummaries: vi.fn(async () => []) };
 });
+vi.mock("../src/providers/index.js", () => ({ createDriver: vi.fn() }));
 
 import { Box, Text } from "ink";
 import { migrateConfig } from "../src/config.js";
 import { expandPastedBlocks, ForgeTui, MessageBlock, pastePlaceholder } from "../src/tui/app.js";
 import { getTheme } from "../src/tui/theme.js";
+import { createDriver } from "../src/providers/index.js";
+import type { ChatDriver } from "../src/providers/types.js";
 
 describe("Forge TUI rendering", () => {
   it("renders the workspace shell and token status without a provider call", async () => {
@@ -217,6 +220,55 @@ describe("Forge TUI rendering", () => {
     expect(renderedLines.length).toBeLessThanOrEqual(20);
     expect(output).toContain("more line(s)");
     expect(output).toContain("COMPOSER");
+  });
+
+  it("batches rapid streaming deltas instead of writing to the terminal once per token", async () => {
+    let sendDeltas: ((delta: string) => void) | undefined;
+    let finishStream: (() => void) | undefined;
+    const driver: ChatDriver = {
+      async streamChat(_messages, _tools, _model, callbacks) {
+        sendDeltas = callbacks.onTextDelta;
+        // Resolve only once the test has pushed all the deltas it wants and
+        // told us to finish, by awaiting a promise the test controls.
+        await new Promise<void>((resolve) => { finishStream = resolve; });
+        callbacks.onDone();
+      },
+    };
+    vi.mocked(createDriver).mockReturnValue(driver);
+
+    const stdout = new PassThrough() as unknown as NodeJS.WriteStream;
+    const stderr = new PassThrough() as unknown as NodeJS.WriteStream;
+    const stdin = new PassThrough() as unknown as NodeJS.ReadStream;
+    Object.assign(stdout, { columns: 120, rows: 30, isTTY: false });
+    Object.assign(stdin, { isTTY: true, setRawMode: vi.fn(), ref: vi.fn(), unref: vi.fn() });
+    let writeCount = 0;
+    stdout.on("data", () => { writeCount += 1; });
+    const config = migrateConfig({ activeProfile: "test", profiles: { test: { baseURL: "https://example.test", apiKey: "", format: "openai", model: "qwen" } } });
+
+    const instance = render(React.createElement(ForgeTui, { config }), { stdout, stderr, stdin, interactive: false, patchConsole: false });
+    await instance.waitUntilRenderFlush();
+    stdin.write("hello");
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    stdin.write("\r");
+    await new Promise((resolve) => setTimeout(resolve, 30));
+
+    writeCount = 0;
+    // Simulate a fast provider: 100 separate token deltas fired back-to-back,
+    // well within a single 50ms batching window.
+    for (let index = 0; index < 100; index += 1) sendDeltas?.(`${index} `);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    const writesDuringBurst = writeCount;
+    finishStream?.();
+    await new Promise((resolve) => setTimeout(resolve, 100));
+
+    instance.unmount();
+    await instance.waitUntilExit();
+
+    // Ink's own 30fps write throttle already keeps this bounded even without
+    // Forge's extra batching; this asserts the combination still holds, i.e.
+    // a fast-streaming provider can't flood the terminal with one write per
+    // token (a plausible contributor to visible corruption during streaming).
+    expect(writesDuringBurst).toBeLessThan(10);
   });
 
   describe("a huge single-line message loaded into a real session", () => {

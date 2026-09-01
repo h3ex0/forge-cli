@@ -210,6 +210,8 @@ export function ForgeTui({ config }: { config: ForgeConfig }): React.ReactElemen
   const pasteCounterRef = React.useRef(0);
   const approvalRef = React.useRef<ApprovalState | null>(null);
   const queuedPromptRef = React.useRef("");
+  const streamBufferRef = React.useRef("");
+  const streamFlushTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
   const operationAbortRef = React.useRef<AbortController | null>(null);
   const messagesRef = React.useRef<ChatMessage[]>(systemMessages(config));
   const sessionRef = React.useRef<AgentSession | null>(null);
@@ -273,28 +275,61 @@ export function ForgeTui({ config }: { config: ForgeConfig }): React.ReactElemen
     return () => { stdout.off("resize", resize); };
   }, [stdout]);
 
-  React.useEffect(() => session.subscribe((event: AgentEvent) => {
-    if (event.type === "turn.started") { setBusy(true); setStreamText(""); setNotice("Thinking…"); setRevision((value) => value + 1); }
-    else if (event.type === "text.delta") setStreamText((value) => value + event.delta);
-    else if (event.type === "message.completed") {
-      setStreamText("");
-      saveSession("autosave", messagesRef.current);
-      setRevision((value) => value + 1);
-    }
-    else if (event.type === "tool.requested") setActivities((items) => [event.activity, ...items.filter((item) => item.id !== event.activity.id)].slice(0, 20));
-    else if (event.type === "tool.updated") setActivities((items) => [event.activity, ...items.filter((item) => item.id !== event.activity.id)].slice(0, 20));
-    else if (event.type === "usage.updated") {
-      setUsage({ ...event.usage });
-      const entry = loadUsageLedger().profiles[config.activeProfile];
-      setSubscriptionTokensUsed(entry ? entry.promptTokens + entry.completionTokens : 0);
-    }
-    else if (event.type === "turn.failed") { setBusy(false); setNotice(`Error: ${sanitizeTerminalText(event.error.message)}`); }
-    else if (event.type === "turn.cancelled") { setBusy(false); setNotice("Cancelled"); }
-    else if (event.type === "turn.completed") {
-      setBusy(false); setNotice("Ready"); setRevision((value) => value + 1);
-      flushQueuedPrompt();
-    }
-  }), [flushQueuedPrompt, session]);
+  const clearStreamBuffer = React.useCallback(() => {
+    if (streamFlushTimerRef.current) { clearTimeout(streamFlushTimerRef.current); streamFlushTimerRef.current = null; }
+    streamBufferRef.current = "";
+  }, []);
+
+  React.useEffect(() => {
+    const unsubscribe = session.subscribe((event: AgentEvent) => {
+      if (event.type === "turn.started") { clearStreamBuffer(); setBusy(true); setStreamText(""); setNotice("Thinking…"); setRevision((value) => value + 1); }
+      else if (event.type === "text.delta") {
+        // A fast provider can emit far more deltas per second than the terminal
+        // can usefully redraw; batch them into one state update roughly every
+        // 50ms instead of re-rendering (and regenerating/writing the full
+        // frame) on every single token.
+        streamBufferRef.current += event.delta;
+        if (!streamFlushTimerRef.current) {
+          streamFlushTimerRef.current = setTimeout(() => {
+            streamFlushTimerRef.current = null;
+            const pending = streamBufferRef.current;
+            streamBufferRef.current = "";
+            if (pending) setStreamText((value) => value + pending);
+          }, 50);
+        }
+      }
+      else if (event.type === "message.completed") {
+        clearStreamBuffer();
+        setStreamText("");
+        saveSession("autosave", messagesRef.current);
+        setRevision((value) => value + 1);
+      }
+      else if (event.type === "tool.requested") setActivities((items) => [event.activity, ...items.filter((item) => item.id !== event.activity.id)].slice(0, 20));
+      else if (event.type === "tool.updated") setActivities((items) => [event.activity, ...items.filter((item) => item.id !== event.activity.id)].slice(0, 20));
+      else if (event.type === "usage.updated") {
+        setUsage({ ...event.usage });
+        const entry = loadUsageLedger().profiles[config.activeProfile];
+        setSubscriptionTokensUsed(entry ? entry.promptTokens + entry.completionTokens : 0);
+      }
+      else if (event.type === "turn.failed") {
+        const pending = streamBufferRef.current;
+        clearStreamBuffer();
+        if (pending) setStreamText((value) => value + pending);
+        setBusy(false); setNotice(`Error: ${sanitizeTerminalText(event.error.message)}`);
+      }
+      else if (event.type === "turn.cancelled") {
+        const pending = streamBufferRef.current;
+        clearStreamBuffer();
+        if (pending) setStreamText((value) => value + pending);
+        setBusy(false); setNotice("Cancelled");
+      }
+      else if (event.type === "turn.completed") {
+        setBusy(false); setNotice("Ready"); setRevision((value) => value + 1);
+        flushQueuedPrompt();
+      }
+    });
+    return () => { unsubscribe(); clearStreamBuffer(); };
+  }, [clearStreamBuffer, flushQueuedPrompt, session]);
 
   React.useEffect(() => {
     fetchModels(config.profiles[config.activeProfile]).then((models) => {
@@ -853,7 +888,7 @@ export function ForgeTui({ config }: { config: ForgeConfig }): React.ReactElemen
       </Box>}
 
       <Box ref={conversationPaneRef} flexGrow={1} flexShrink={1} flexBasis={0} flexDirection="column" overflow="hidden" borderStyle="single" borderColor={focus === "conversation" ? theme.focusBorder : theme.border} paddingX={1}>
-        {visibleMessages.map((message, index) => <MessageBlock key={`${message.role}-${index}-${message.content.length}`} message={message} theme={theme} maxLines={messageMaxLines} paneWidth={conversationPaneWidth} />)}
+        {visibleMessages.map((message, index) => <MessageBlock key={`${message.role}-${index}`} message={message} theme={theme} maxLines={messageMaxLines} paneWidth={conversationPaneWidth} />)}
         {!visibleMessages.length && <Box flexGrow={1} alignItems="center" justifyContent="center"><Text color={theme.muted}>Ask about this workspace, press Ctrl+K for commands, or Ctrl+M for models.</Text></Box>}
       </Box>
 
