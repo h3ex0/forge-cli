@@ -61,19 +61,28 @@ function statusSymbol(status: ToolActivity["status"]): string {
 }
 
 export function MessageBlock({ message, theme, maxLines, paneWidth }: { message: ChatMessage; theme: ReturnType<typeof getTheme>; maxLines: number; paneWidth: number }): React.ReactElement {
-  const sanitized = sanitizeTerminalText(message.content);
-  const clippedByChars = sanitized.length > 12_000 ? `…[earlier content clipped]\n${sanitized.slice(-12_000)}` : sanitized;
-  // Cap by rendered (wrapped) rows, not "\n"-delimited lines: a single very
-  // long line with no newlines wraps into many terminal rows on its own and
-  // would otherwise ignore a line-count cap entirely, pushing the rest of
-  // the workspace layout out of place instead of staying inside its box.
-  // Wrapping here ourselves (rather than leaving it to <Text wrap="wrap">)
-  // makes the cap exact; each pre-wrapped row is rendered with
-  // wrap="truncate-end" as a backstop in case this width estimate is a
-  // little off.
-  const allRows = wrapReaderText(clippedByChars, paneWidth);
-  const overflow = allRows.length - maxLines;
-  const rows = overflow > 0 ? allRows.slice(0, maxLines) : allRows;
+  const { rows, overflow } = React.useMemo(() => {
+    const sanitized = sanitizeTerminalText(message.content);
+    const clippedByChars = sanitized.length > 12_000 ? `…[earlier content clipped]\n${sanitized.slice(-12_000)}` : sanitized;
+    // Bound how much text we ever hand to the word-wrapper: only the first
+    // (maxLines + a margin for mid-word breaks) rows' worth of characters
+    // could possibly end up visible, so wrapping further is wasted work —
+    // and this component re-renders on every streamed token while busy.
+    const charBudget = (maxLines + 5) * paneWidth;
+    const budgetTruncated = clippedByChars.length > charBudget;
+    const wrapBudget = budgetTruncated ? clippedByChars.slice(0, charBudget) : clippedByChars;
+    // Cap by rendered (wrapped) rows, not "\n"-delimited lines: a single very
+    // long line with no newlines wraps into many terminal rows on its own and
+    // would otherwise ignore a line-count cap entirely, pushing the rest of
+    // the workspace layout out of place instead of staying inside its box.
+    // Wrapping here ourselves (rather than leaving it to <Text wrap="wrap">)
+    // makes the cap exact; each pre-wrapped row is rendered with
+    // wrap="truncate-end" as a backstop in case this width estimate is a
+    // little off.
+    const allRows = wrapReaderText(wrapBudget, paneWidth);
+    const overflow = budgetTruncated ? Math.max(1, allRows.length - maxLines) : allRows.length - maxLines;
+    return { rows: overflow > 0 ? allRows.slice(0, maxLines) : allRows, overflow };
+  }, [message.content, maxLines, paneWidth]);
   const role = message.role === "user" ? "YOU" : "FORGE";
   const color = message.role === "user" ? theme.accent : theme.success;
   return <Box flexDirection="column" marginBottom={1}>
