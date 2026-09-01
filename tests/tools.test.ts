@@ -3,9 +3,11 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { createTools } from "../src/tools/index.js";
+import { applyUndo, clearUndoJournals, popUndo, undoStackSize } from "../src/undo.js";
 
 const created: string[] = [];
 afterEach(() => {
+  clearUndoJournals();
   for (const directory of created.splice(0)) fs.rmSync(directory, { recursive: true, force: true });
 });
 
@@ -126,6 +128,32 @@ describe("workspace-scoped tools", () => {
     expect(diff).toContain("-alpha");
     expect(diff).toContain("+ALPHA");
     expect(fs.readFileSync(path.join(root, "notes.txt"), "utf-8")).toBe("alpha\nbeta\nbeta\n");
+  });
+
+  it("records undo journal entries for write_file, edit_file, move_file, and delete_file", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "forge-tools-"));
+    created.push(root);
+    const tools = createTools({ workspaceRoot: root });
+
+    await tools.find((item) => item.def.name === "write_file")!.execute({ path: "a.txt", content: "hello" });
+    expect(undoStackSize(root)).toBe(1);
+    applyUndo(root, popUndo(root)!);
+    expect(fs.existsSync(path.join(root, "a.txt"))).toBe(false);
+
+    fs.writeFileSync(path.join(root, "b.txt"), "one\ntwo\n");
+    await tools.find((item) => item.def.name === "edit_file")!.execute({ path: "b.txt", old_string: "two", new_string: "TWO" });
+    applyUndo(root, popUndo(root)!);
+    expect(fs.readFileSync(path.join(root, "b.txt"), "utf-8")).toBe("one\ntwo\n");
+
+    await tools.find((item) => item.def.name === "move_file")!.execute({ source: "b.txt", destination: "c.txt" });
+    applyUndo(root, popUndo(root)!);
+    expect(fs.existsSync(path.join(root, "b.txt"))).toBe(true);
+    expect(fs.existsSync(path.join(root, "c.txt"))).toBe(false);
+
+    await tools.find((item) => item.def.name === "delete_file")!.execute({ path: "b.txt" });
+    expect(fs.existsSync(path.join(root, "b.txt"))).toBe(false);
+    applyUndo(root, popUndo(root)!);
+    expect(fs.readFileSync(path.join(root, "b.txt"), "utf-8")).toBe("one\ntwo\n");
   });
 
   it("tracks a todo list across reads and writes", async () => {

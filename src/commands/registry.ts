@@ -20,6 +20,7 @@ export const SLASH_COMMANDS = [
   { name: "index", usage: "/index status", description: "Show detected project metadata" },
   { name: "context", usage: "/context list|add|drop|clear|window <tokens>", description: "Manage pinned model context and the context-window warning threshold" },
   { name: "compact", usage: "/compact", description: "Summarize the conversation so far and replace history with the summary to free up context" },
+  { name: "undo", usage: "/undo", description: "Revert the most recent file write, edit, move, copy, or delete this session made" },
   { name: "read", usage: "/read <file> [start:end]", description: "Read a workspace file with line numbers" },
   { name: "open", usage: "/open <file>", description: "Pin a workspace file into model context" },
   { name: "search", usage: "/search <regex> [glob]", description: "Search workspace text" },

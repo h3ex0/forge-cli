@@ -12,6 +12,7 @@ import { createTools } from "../tools/index.js";
 import { decidePermission } from "../security/policy.js";
 import { fetchModels, type ModelInfo } from "../providers/models.js";
 import { createDriver } from "../providers/index.js";
+import { applyUndo, popUndo } from "../undo.js";
 import { inspectLocalModel, listRuntimeSummaries, pullLocalModel } from "../runtime/service.js";
 import { startRuntime, stopOwnedRuntime } from "../runtime/process.js";
 import { listSessions, loadSession, saveSession } from "../session.js";
@@ -400,6 +401,16 @@ export function ForgeTui({ config }: { config: ForgeConfig }): React.ReactElemen
     if (command.type === "notice") { setNotice(command.message); setRevision((revision) => revision + 1); return; }
     if (command.type === "clear") { messagesRef.current.splice(0, messagesRef.current.length, ...systemMessages(config)); setActivities([]); setNotice("New conversation"); setRevision((revision) => revision + 1); return; }
     if (command.type === "load") { messagesRef.current.splice(0, messagesRef.current.length, ...command.messages); setNotice(`Loaded ${command.name}`); setRevision((revision) => revision + 1); return; }
+    if (command.type === "undo") {
+      const entry = popUndo(config.permissions.workspaceRoot);
+      if (!entry) { setNotice("Nothing to undo."); return; }
+      try {
+        const touched = applyUndo(config.permissions.workspaceRoot, entry);
+        setNotice(`Undid ${entry.tool}: ${touched.join(", ")}.`);
+      } catch (error) { setNotice(`Undo failed: ${error instanceof Error ? error.message : String(error)}`); }
+      setRevision((value) => value + 1);
+      return;
+    }
     if (command.type === "compact") {
       const history = messagesRef.current.filter((message) => message.role !== "system");
       if (history.length < 2) { setNotice("Nothing to compact yet."); return; }

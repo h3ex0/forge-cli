@@ -121,6 +121,7 @@ export function executeTuiCommand(input, context) {
             return { type: "overlay", overlay: "context" };
         }
         case "compact": return { type: "compact" };
+        case "undo": return { type: "undo" };
         case "save":
         case "checkpoint": {
             const name = arg || defaultSessionName();

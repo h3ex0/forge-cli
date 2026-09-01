@@ -23,7 +23,7 @@ Forge is a local-first AI coding CLI with a TUI-first workspace, streaming chat,
 | Local model freedom | Run downloaded Qwen, Llama, Mistral, Gemma, and other models through supported local runtimes. |
 | Provider portability | Use OpenAI-compatible, Anthropic, Gemini, and custom endpoints without changing workflows. |
 | Workspace awareness | Load `FORGE.md` or `AGENTS.md`, inspect project metadata, pin files, search code, and review Git state. |
-| Layered safety | Canonical path checks, schema-validated tool calls, permission modes, SSRF defenses, atomic writes, and explicit approvals. |
+| Layered safety | Canonical path checks, schema-validated tool calls, permission modes, SSRF defenses, atomic writes, explicit approvals with a diff preview of the actual change, and `/undo` to revert a write/edit/move/copy/delete. |
 | Scriptable automation | Use interactive chat, a full-screen TUI, or `forge run` with JSON output. |
 | Local ownership | Keep configuration, history, and saved sessions under `~/.forge`; remote keys use the OS credential store when available. |
 

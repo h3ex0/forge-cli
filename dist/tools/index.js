@@ -7,6 +7,7 @@ import fg from "fast-glob";
 import { createTwoFilesPatch } from "diff";
 import { validatePublicUrl } from "../security/network.js";
 import { resolveWorkspacePath } from "../security/workspace.js";
+import { recordUndo, snapshotPath } from "../undo.js";
 /** Build a unified diff for an approval preview; returns undefined when there is nothing to show. */
 function unifiedDiff(relativePath, before, after) {
     if (before === after)
@@ -66,7 +67,7 @@ function runFile(file, args, cwd, timeout = 60_000, signal) {
         });
     });
 }
-function tool(def, risk, execute, preview) {
+function tool(def, risk, execute, preview, affectedPaths) {
     const validate = ajv.compile(def.parameters);
     return {
         def,
@@ -78,11 +79,28 @@ function tool(def, risk, execute, preview) {
             return execute(args, signal);
         },
         preview: preview && ((args) => (validate(args) ? preview(args) : undefined)),
+        affectedPaths,
+    };
+}
+/** Wrap a tool with undo-journal recording when it declares affectedPaths. */
+function withUndoTracking(root, spec) {
+    if (!spec.affectedPaths)
+        return spec;
+    return {
+        ...spec,
+        async execute(args, signal) {
+            const snapshots = spec.affectedPaths(args).map((relativePath) => snapshotPath(root, relativePath));
+            const result = await spec.execute(args, signal);
+            if (snapshots.every((snapshot) => snapshot !== null)) {
+                recordUndo(root, spec.def.name, snapshots);
+            }
+            return result;
+        },
     };
 }
 export function createTools(context) {
     const root = fs.realpathSync(path.resolve(context.workspaceRoot));
-    return [
+    const tools = [
         tool({
             name: "read_file",
             description: "Read a UTF-8 file inside the workspace, optionally selecting an inclusive line range.",
@@ -175,7 +193,7 @@ export function createTools(context) {
             catch {
                 return undefined;
             }
-        }),
+        }, (args) => [text(args, "path")]),
         tool({
             name: "edit_file",
             description: "Replace one exact string match in a workspace file.",
@@ -207,7 +225,7 @@ export function createTools(context) {
             catch {
                 return undefined;
             }
-        }),
+        }, (args) => [text(args, "path")]),
         tool({
             name: "list_dir",
             description: "List files and directories inside a workspace directory.",
@@ -306,7 +324,7 @@ export function createTools(context) {
             fs.mkdirSync(path.dirname(destination), { recursive: true });
             fs.copyFileSync(source, destination, fs.constants.COPYFILE_EXCL);
             return `Copied ${path.relative(root, source)} to ${path.relative(root, destination)}`;
-        }),
+        }, undefined, (args) => [text(args, "destination")]),
         tool({
             name: "move_file",
             description: "Move or rename a workspace file to a new workspace path without overwriting an existing target.",
@@ -319,7 +337,7 @@ export function createTools(context) {
             fs.mkdirSync(path.dirname(destination), { recursive: true });
             fs.renameSync(source, destination);
             return `Moved ${path.relative(root, source)} to ${path.relative(root, destination)}`;
-        }),
+        }, undefined, (args) => [text(args, "source"), text(args, "destination")]),
         tool({
             name: "delete_file",
             description: "Delete a single workspace file. Refuses to delete directories.",
@@ -330,7 +348,7 @@ export function createTools(context) {
                 throw new Error("delete_file only removes files; use run_command for directories.");
             fs.unlinkSync(file);
             return `Deleted ${path.relative(root, file)}`;
-        }),
+        }, undefined, (args) => [text(args, "path")]),
         tool({
             name: "todo_write",
             description: "Replace the working plan's todo list. Use this to track multi-step tasks: one item in_progress at a time, mark items completed as you finish them.",
@@ -412,6 +430,7 @@ export function createTools(context) {
             throw new Error("Too many redirects.");
         }),
     ];
+    return tools.map((spec) => withUndoTracking(root, spec));
 }
 export function getToolDefs(context = { workspaceRoot: process.cwd() }) {
     return createTools(context).map((item) => item.def);

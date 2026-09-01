@@ -10,6 +10,7 @@ import { createTools } from "../tools/index.js";
 import { decidePermission } from "../security/policy.js";
 import { fetchModels } from "../providers/models.js";
 import { createDriver } from "../providers/index.js";
+import { applyUndo, popUndo } from "../undo.js";
 import { inspectLocalModel, listRuntimeSummaries, pullLocalModel } from "../runtime/service.js";
 import { startRuntime, stopOwnedRuntime } from "../runtime/process.js";
 import { listSessions, loadSession, saveSession } from "../session.js";
@@ -411,6 +412,22 @@ export function ForgeTui({ config }) {
             messagesRef.current.splice(0, messagesRef.current.length, ...command.messages);
             setNotice(`Loaded ${command.name}`);
             setRevision((revision) => revision + 1);
+            return;
+        }
+        if (command.type === "undo") {
+            const entry = popUndo(config.permissions.workspaceRoot);
+            if (!entry) {
+                setNotice("Nothing to undo.");
+                return;
+            }
+            try {
+                const touched = applyUndo(config.permissions.workspaceRoot, entry);
+                setNotice(`Undid ${entry.tool}: ${touched.join(", ")}.`);
+            }
+            catch (error) {
+                setNotice(`Undo failed: ${error instanceof Error ? error.message : String(error)}`);
+            }
+            setRevision((value) => value + 1);
             return;
         }
         if (command.type === "compact") {

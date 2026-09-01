@@ -110,6 +110,11 @@ describe("TUI commands", () => {
     expect(executeTuiCommand("/compact", value)).toEqual({ type: "compact" });
   });
 
+  it("maps /undo to a dedicated undo action", () => {
+    const value = context();
+    expect(executeTuiCommand("/undo", value)).toEqual({ type: "undo" });
+  });
+
   it("builds a subagent delegation prompt, optionally pinned to a provider profile", () => {
     const value = context();
     expect(executeTuiCommand("/agent", value)).toMatchObject({ type: "notice", message: expect.stringContaining("Usage:") });

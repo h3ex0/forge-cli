@@ -9,6 +9,7 @@ import type { ToolDef } from "../providers/types.js";
 import type { ToolRisk } from "../security/policy.js";
 import { validatePublicUrl } from "../security/network.js";
 import { resolveWorkspacePath } from "../security/workspace.js";
+import { recordUndo, snapshotPath } from "../undo.js";
 
 export interface ToolContext {
   workspaceRoot: string;
@@ -21,6 +22,8 @@ export interface ToolSpec {
   execute: (args: Record<string, unknown>, signal?: AbortSignal) => Promise<string>;
   /** Render a unified diff of what this call would change, without applying it. Read-only tools omit it. */
   preview?: (args: Record<string, unknown>) => string | undefined;
+  /** Workspace-relative paths this call is about to mutate, snapshotted beforehand so /undo can restore them. */
+  affectedPaths?: (args: Record<string, unknown>) => string[];
 }
 
 /** Build a unified diff for an approval preview; returns undefined when there is nothing to show. */
@@ -91,7 +94,7 @@ function runFile(file: string, args: string[], cwd: string, timeout = 60_000, si
   });
 }
 
-function tool(def: ToolDef, risk: ToolRisk, execute: ToolSpec["execute"], preview?: ToolSpec["preview"]): ToolSpec {
+function tool(def: ToolDef, risk: ToolRisk, execute: ToolSpec["execute"], preview?: ToolSpec["preview"], affectedPaths?: ToolSpec["affectedPaths"]): ToolSpec {
   const validate: ValidateFunction = ajv.compile(def.parameters);
   return {
     def,
@@ -102,12 +105,29 @@ function tool(def: ToolDef, risk: ToolRisk, execute: ToolSpec["execute"], previe
       return execute(args, signal);
     },
     preview: preview && ((args) => (validate(args) ? preview(args) : undefined)),
+    affectedPaths,
+  };
+}
+
+/** Wrap a tool with undo-journal recording when it declares affectedPaths. */
+function withUndoTracking(root: string, spec: ToolSpec): ToolSpec {
+  if (!spec.affectedPaths) return spec;
+  return {
+    ...spec,
+    async execute(args, signal) {
+      const snapshots = spec.affectedPaths!(args).map((relativePath) => snapshotPath(root, relativePath));
+      const result = await spec.execute(args, signal);
+      if (snapshots.every((snapshot): snapshot is NonNullable<typeof snapshot> => snapshot !== null)) {
+        recordUndo(root, spec.def.name, snapshots);
+      }
+      return result;
+    },
   };
 }
 
 export function createTools(context: ToolContext): ToolSpec[] {
   const root = fs.realpathSync(path.resolve(context.workspaceRoot));
-  return [
+  const tools: ToolSpec[] = [
     tool(
       {
         name: "read_file",
@@ -216,6 +236,7 @@ export function createTools(context: ToolContext): ToolSpec[] {
           return undefined;
         }
       },
+      (args) => [text(args, "path")],
     ),
     tool(
       {
@@ -250,6 +271,7 @@ export function createTools(context: ToolContext): ToolSpec[] {
           return undefined;
         }
       },
+      (args) => [text(args, "path")],
     ),
     tool(
       {
@@ -373,6 +395,8 @@ export function createTools(context: ToolContext): ToolSpec[] {
         fs.copyFileSync(source, destination, fs.constants.COPYFILE_EXCL);
         return `Copied ${path.relative(root, source)} to ${path.relative(root, destination)}`;
       },
+      undefined,
+      (args) => [text(args, "destination")],
     ),
     tool(
       {
@@ -389,6 +413,8 @@ export function createTools(context: ToolContext): ToolSpec[] {
         fs.renameSync(source, destination);
         return `Moved ${path.relative(root, source)} to ${path.relative(root, destination)}`;
       },
+      undefined,
+      (args) => [text(args, "source"), text(args, "destination")],
     ),
     tool(
       {
@@ -403,6 +429,8 @@ export function createTools(context: ToolContext): ToolSpec[] {
         fs.unlinkSync(file);
         return `Deleted ${path.relative(root, file)}`;
       },
+      undefined,
+      (args) => [text(args, "path")],
     ),
     tool(
       {
@@ -501,6 +529,7 @@ export function createTools(context: ToolContext): ToolSpec[] {
       },
     ),
   ];
+  return tools.map((spec) => withUndoTracking(root, spec));
 }
 
 export function getToolDefs(context: ToolContext = { workspaceRoot: process.cwd() }): ToolDef[] {

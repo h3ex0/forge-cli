@@ -27,7 +27,8 @@ export type TuiCommandResult =
   | { type: "tool-sequence"; tools: Array<{ name: string; args: Record<string, unknown> }> }
   | { type: "provider-add"; name: string; baseURL: string; format: "openai" | "anthropic" | "gemini"; model: string }
   | { type: "key-update"; name: string }
-  | { type: "compact" };
+  | { type: "compact" }
+  | { type: "undo" };
 
 export interface TuiCommandContext {
   config: ForgeConfig;
@@ -133,6 +134,7 @@ export function executeTuiCommand(input: string, context: TuiCommandContext): Tu
       return { type: "overlay", overlay: "context" };
     }
     case "compact": return { type: "compact" };
+    case "undo": return { type: "undo" };
     case "save":
     case "checkpoint": {
       const name = arg || defaultSessionName();
