@@ -9,8 +9,10 @@ vi.mock("../src/runtime/service.js", async (importOriginal) => {
   return { ...original, listRuntimeSummaries: vi.fn(async () => []) };
 });
 
+import { Box, Text } from "ink";
 import { migrateConfig } from "../src/config.js";
-import { expandPastedBlocks, ForgeTui, pastePlaceholder } from "../src/tui/app.js";
+import { expandPastedBlocks, ForgeTui, MessageBlock, pastePlaceholder } from "../src/tui/app.js";
+import { getTheme } from "../src/tui/theme.js";
 
 describe("Forge TUI rendering", () => {
   it("renders the workspace shell and token status without a provider call", async () => {
@@ -90,5 +92,36 @@ describe("Forge TUI rendering", () => {
 
     expect(expandPastedBlocks(`Please review: ${token}`, blocks)).toBe(`Please review: ${content}`);
     expect(expandPastedBlocks("no placeholder here", blocks)).toBe("no placeholder here");
+  });
+
+  it("caps a single message's rendered lines instead of letting it overflow the pane", async () => {
+    const stdout = new PassThrough() as unknown as NodeJS.WriteStream;
+    const stderr = new PassThrough() as unknown as NodeJS.WriteStream;
+    const stdin = new PassThrough() as unknown as NodeJS.ReadStream;
+    Object.assign(stdout, { columns: 100, rows: 20, isTTY: false });
+    Object.assign(stdin, { isTTY: true, setRawMode: vi.fn(), ref: vi.fn(), unref: vi.fn() });
+    let output = "";
+    stdout.on("data", (chunk) => { output += chunk.toString(); });
+    const theme = getTheme("flame");
+    const hugeMessage = { role: "user" as const, content: Array.from({ length: 300 }, (_, i) => `line ${i}`).join("\n") };
+
+    const instance = render(
+      React.createElement(Box, { flexDirection: "column", height: 20, width: 100 },
+        React.createElement(Box, { flexGrow: 1, flexDirection: "column", overflow: "hidden" },
+          React.createElement(MessageBlock, { message: hugeMessage, theme, maxLines: 10 }),
+        ),
+        React.createElement(Box, { borderStyle: "round" }, React.createElement(Text, null, "COMPOSER")),
+      ),
+      { stdout, stderr, stdin, interactive: false, patchConsole: false },
+    );
+    await instance.waitUntilRenderFlush();
+    instance.unmount();
+    await instance.waitUntilExit();
+
+    expect(output).toContain("line 0");
+    expect(output).toContain("line 9");
+    expect(output).not.toContain("line 299");
+    expect(output).toContain("more line(s)");
+    expect(output).toContain("COMPOSER");
   });
 });
