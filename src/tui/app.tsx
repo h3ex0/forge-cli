@@ -60,23 +60,28 @@ function statusSymbol(status: ToolActivity["status"]): string {
   return status === "completed" ? "✓" : status === "failed" ? "×" : status === "denied" ? "!" : status === "running" ? "●" : "○";
 }
 
-export function MessageBlock({ message, theme, maxLines }: { message: ChatMessage; theme: ReturnType<typeof getTheme>; maxLines: number }): React.ReactElement {
+export function MessageBlock({ message, theme, maxLines, paneWidth }: { message: ChatMessage; theme: ReturnType<typeof getTheme>; maxLines: number; paneWidth: number }): React.ReactElement {
   const sanitized = sanitizeTerminalText(message.content);
   const clippedByChars = sanitized.length > 12_000 ? `…[earlier content clipped]\n${sanitized.slice(-12_000)}` : sanitized;
-  const allLines = clippedByChars.split("\n");
-  // A single very long or line-wrapping message can render far more terminal
-  // rows than the pane has room for; without a cap it pushes the rest of the
-  // workspace layout out of place instead of just scrolling within its box.
-  const overflow = allLines.length - maxLines;
-  const lines = overflow > 0 ? allLines.slice(0, maxLines) : allLines;
+  // Cap by rendered (wrapped) rows, not "\n"-delimited lines: a single very
+  // long line with no newlines wraps into many terminal rows on its own and
+  // would otherwise ignore a line-count cap entirely, pushing the rest of
+  // the workspace layout out of place instead of staying inside its box.
+  // Wrapping here ourselves (rather than leaving it to <Text wrap="wrap">)
+  // makes the cap exact; each pre-wrapped row is rendered with
+  // wrap="truncate-end" as a backstop in case this width estimate is a
+  // little off.
+  const allRows = wrapReaderText(clippedByChars, paneWidth);
+  const overflow = allRows.length - maxLines;
+  const rows = overflow > 0 ? allRows.slice(0, maxLines) : allRows;
   const role = message.role === "user" ? "YOU" : "FORGE";
   const color = message.role === "user" ? theme.accent : theme.success;
   return <Box flexDirection="column" marginBottom={1}>
     <Text bold color={color}>{role}</Text>
-    {lines.map((line, index) => {
+    {rows.map((line, index) => {
       const code = /^\s{4}|^```/.test(line);
       const heading = /^#{1,6}\s/.test(line);
-      return <Text key={index} color={code ? theme.code : theme.text} bold={heading} wrap="wrap">{line || " "}</Text>;
+      return <Text key={index} color={code ? theme.code : theme.text} bold={heading} wrap="truncate-end">{line || " "}</Text>;
     })}
     {overflow > 0 && <Text color={theme.muted}>…{overflow} more line(s) — Ctrl+Y for the full untruncated conversation</Text>}
   </Box>;
@@ -765,6 +770,11 @@ export function ForgeTui({ config }: { config: ForgeConfig }): React.ReactElemen
   const visibleMessages = displayMessages.slice(Math.max(0, end - maxMessages), end);
   const wide = dimensions.columns >= 120;
   const medium = dimensions.columns >= 90;
+  // Estimated inner width of the conversation pane, used to pre-wrap long
+  // messages ourselves so a truncation cap can be enforced on rendered rows
+  // rather than raw "\n"-delimited lines (a single very long line with no
+  // newlines would otherwise ignore any line-count-based cap entirely).
+  const conversationPaneWidth = Math.max(20, dimensions.columns - (wide ? 29 : 0) - (medium ? (wide ? 33 : 29) : 0) - 4);
   const suggestions = tuiCommandSuggestions(input);
   const estimatedCostUsd = estimateCost(profile, usage, pricing);
   const contextTokens = estimateMessageTokens(messagesRef.current);
@@ -799,8 +809,8 @@ export function ForgeTui({ config }: { config: ForgeConfig }): React.ReactElemen
       <Text wrap="truncate-end">{sanitizeTerminalText(path.basename(config.permissions.workspaceRoot))} · {sanitizeTerminalText(config.activeProfile)}/{sanitizeTerminalText(profile.model)} · {profile.kind === "local" ? "● local" : "◉ cloud"} · {config.permissions.mode}{config.routing.offline ? " · offline" : ""}</Text>
     </Box>
 
-    <Box flexGrow={1}>
-      {wide && <Box ref={activityPaneRef} width={25} flexDirection="column" overflow="hidden" borderStyle="single" borderColor={focus === "activity" ? theme.focusBorder : theme.border} paddingX={1}>
+    <Box flexGrow={1} flexShrink={1} flexBasis={0} overflow="hidden">
+      {wide && <Box ref={activityPaneRef} width={25} flexShrink={0} flexDirection="column" overflow="hidden" borderStyle="single" borderColor={focus === "activity" ? theme.focusBorder : theme.border} paddingX={1}>
         <Text bold color={theme.accent}>ACTIVITY</Text>
         {activities.slice(0, Math.max(3, dimensions.rows - 10)).map((item, index) => <Box key={item.id} ref={(node) => { if (node) activityItemRefs.current.set(index, node); else activityItemRefs.current.delete(index); }}><Text inverse={focus === "activity" && index === selectedActivity} color={item.status === "failed" ? theme.danger : item.status === "completed" ? theme.success : theme.warning} wrap="truncate-end">
           {statusSymbol(item.status)} {sanitizeTerminalText(item.name)} {item.durationMs != null ? `${item.durationMs}ms` : ""}
@@ -808,12 +818,12 @@ export function ForgeTui({ config }: { config: ForgeConfig }): React.ReactElemen
         {!activities.length && <Text color={theme.muted}>Tool calls appear here.</Text>}
       </Box>}
 
-      <Box ref={conversationPaneRef} flexGrow={1} flexDirection="column" overflow="hidden" borderStyle="single" borderColor={focus === "conversation" ? theme.focusBorder : theme.border} paddingX={1}>
-        {visibleMessages.map((message, index) => <MessageBlock key={`${message.role}-${index}-${message.content.length}`} message={message} theme={theme} maxLines={messageMaxLines} />)}
+      <Box ref={conversationPaneRef} flexGrow={1} flexShrink={1} flexBasis={0} flexDirection="column" overflow="hidden" borderStyle="single" borderColor={focus === "conversation" ? theme.focusBorder : theme.border} paddingX={1}>
+        {visibleMessages.map((message, index) => <MessageBlock key={`${message.role}-${index}-${message.content.length}`} message={message} theme={theme} maxLines={messageMaxLines} paneWidth={conversationPaneWidth} />)}
         {!visibleMessages.length && <Box flexGrow={1} alignItems="center" justifyContent="center"><Text color={theme.muted}>Ask about this workspace, press Ctrl+K for commands, or Ctrl+M for models.</Text></Box>}
       </Box>
 
-      {medium && <Box ref={contextPaneRef} width={wide ? 29 : 25} flexDirection="column" overflow="hidden" borderStyle="single" borderColor={focus === "context" ? theme.focusBorder : theme.border} paddingX={1}>
+      {medium && <Box ref={contextPaneRef} width={wide ? 29 : 25} flexShrink={0} flexDirection="column" overflow="hidden" borderStyle="single" borderColor={focus === "context" ? theme.focusBorder : theme.border} paddingX={1}>
         <Text bold color={theme.accent}>CONTEXT</Text>
         <Text wrap="truncate-end">Workspace: {sanitizeTerminalText(path.basename(config.permissions.workspaceRoot))}</Text>
         <Text>Instructions: {loadProjectInstructions(config.permissions.workspaceRoot).length}</Text>
