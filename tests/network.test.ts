@@ -10,4 +10,10 @@ describe("network target validation", () => {
   it("rejects unsupported protocols", async () => {
     await expect(validatePublicUrl("file:///etc/passwd")).rejects.toThrow(/protocol/i);
   });
+
+  it("rejects IPv4-mapped IPv6 loopback and private addresses", async () => {
+    await expect(validatePublicUrl("http://[::ffff:127.0.0.1]/")).rejects.toThrow(/private|loopback/i);
+    await expect(validatePublicUrl("http://[::ffff:169.254.169.254]/latest/meta-data")).rejects.toThrow(/private|loopback/i);
+    await expect(validatePublicUrl("http://[::ffff:7f00:1]/")).rejects.toThrow(/private|loopback/i);
+  });
 });

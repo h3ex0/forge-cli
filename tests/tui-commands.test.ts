@@ -59,4 +59,40 @@ describe("TUI commands", () => {
     expect(executeTuiCommand("/mouse on", value)).toMatchObject({ type: "notice" });
     expect(value.config.ui.mouse).toBe(true);
   });
+
+  it("stages a new provider without ever handling its key as text", () => {
+    const value = context();
+    expect(executeTuiCommand("/provider add openrouter https://openrouter.ai/api/v1 openai openrouter/auto", value)).toEqual({
+      type: "provider-add",
+      name: "openrouter",
+      baseURL: "https://openrouter.ai/api/v1",
+      format: "openai",
+      model: "openrouter/auto",
+    });
+    expect(value.config.profiles.openrouter).toBeUndefined();
+  });
+
+  it("defaults to openai format when none is given", () => {
+    const value = context();
+    expect(executeTuiCommand("/provider add openrouter https://openrouter.ai/api/v1 openrouter/auto", value)).toEqual({
+      type: "provider-add",
+      name: "openrouter",
+      baseURL: "https://openrouter.ai/api/v1",
+      format: "openai",
+      model: "openrouter/auto",
+    });
+  });
+
+  it("rejects a malformed provider add before any key prompt", () => {
+    const value = context();
+    expect(executeTuiCommand("/provider add openrouter ftp://bad openai model-id", value)).toMatchObject({ type: "notice", message: expect.stringContaining("http") });
+    expect(executeTuiCommand("/provider add openrouter", value)).toMatchObject({ type: "notice", message: expect.stringContaining("Usage:") });
+  });
+
+  it("routes key updates to masked entry and refuses inline plaintext keys", () => {
+    const value = context();
+    expect(executeTuiCommand("/key test", value)).toEqual({ type: "key-update", name: "test" });
+    expect(executeTuiCommand("/key test sk-plaintext", value)).toMatchObject({ type: "notice", message: expect.stringContaining("disabled") });
+    expect(executeTuiCommand("/key unknown-profile", value)).toMatchObject({ type: "notice", message: expect.stringContaining("Unknown profile") });
+  });
 });

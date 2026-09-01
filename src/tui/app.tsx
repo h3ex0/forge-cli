@@ -82,6 +82,15 @@ function ApprovalModal({ state, theme, boxRef, allowRef, denyRef }: { state: App
   </Box>;
 }
 
+function KeyEntryModal({ name, mode, draft, theme }: { name: string; mode: "add" | "update"; draft: string; theme: ReturnType<typeof getTheme> }): React.ReactElement {
+  return <Box position="absolute" width="70%" alignSelf="center" marginTop={2} flexDirection="column" borderStyle="double" borderColor={theme.accent} paddingX={2} paddingY={1}>
+    <Text bold color={theme.accent}>{mode === "add" ? `NEW PROVIDER · ${name}` : `UPDATE KEY · ${name}`}</Text>
+    <Text color={theme.muted}>Paste or type the API key. It is masked here and never added to composer history.</Text>
+    <Text color={theme.text}>{"•".repeat(draft.length)}█</Text>
+    <Text color={theme.muted}>Enter to save · Esc to cancel</Text>
+  </Box>;
+}
+
 /** Render Forge's responsive, keyboard-first full-screen terminal workspace. */
 export function ForgeTui({ config }: { config: ForgeConfig }): React.ReactElement {
   const { exit } = useApp();
@@ -95,6 +104,7 @@ export function ForgeTui({ config }: { config: ForgeConfig }): React.ReactElemen
   const [notice, setNotice] = React.useState("Ready");
   const [activities, setActivities] = React.useState<ToolActivity[]>([]);
   const [approval, setApproval] = React.useState<ApprovalState | null>(null);
+  const [keyEntry, setKeyEntry] = React.useState<null | { mode: "add" | "update"; name: string; baseURL: string; format: Profile["format"]; model: string; draft: string }>(null);
   const [overlay, setOverlay] = React.useState<TuiOverlay | null>(null);
   const [overlayQuery, setOverlayQuery] = React.useState("");
   const [overlayItems, setOverlayItems] = React.useState<SelectItem[]>([]);
@@ -278,6 +288,23 @@ export function ForgeTui({ config }: { config: ForgeConfig }): React.ReactElemen
     }
   }, [config, filteredOverlayItems, overlay, selected]);
 
+  const finishKeyEntry = React.useCallback((cancelled: boolean) => {
+    setKeyEntry((current) => {
+      if (!current) return null;
+      if (cancelled) { setNotice(current.mode === "add" ? "Provider setup cancelled." : "Key entry cancelled."); return null; }
+      if (!current.draft) { setNotice("No key entered — nothing changed."); return null; }
+      try {
+        config.profiles[current.name] = { baseURL: current.baseURL, apiKey: current.draft, format: current.format, model: current.model, kind: "remote" };
+        saveConfig(config);
+        setNotice(current.mode === "add" ? `Provider "${current.name}" added.` : `API key updated for "${current.name}".`);
+        setRevision((value) => value + 1);
+      } catch (error) {
+        setNotice(`Could not save provider: ${error instanceof Error ? error.message : String(error)}`);
+      }
+      return null;
+    });
+  }, [config]);
+
   const submit = React.useCallback(async () => {
     const value = input.trim();
     if (!value) return;
@@ -288,18 +315,34 @@ export function ForgeTui({ config }: { config: ForgeConfig }): React.ReactElemen
       setNotice("Prompt queued for the next turn");
       return;
     }
-    const command = executeTuiCommand(value, {
-      config,
-      messages: messagesRef.current,
-      contextFiles: contextFilesRef.current,
-      persist: () => saveConfig(config),
-      setWorkspace(workspace) {
-        config.permissions.workspaceRoot = workspace;
-        contextFilesRef.current.clear();
-        messagesRef.current.splice(0, messagesRef.current.length, ...systemMessages(config));
-        saveConfig(config);
-      },
-    });
+    let command: ReturnType<typeof executeTuiCommand>;
+    try {
+      command = executeTuiCommand(value, {
+        config,
+        messages: messagesRef.current,
+        contextFiles: contextFilesRef.current,
+        persist: () => saveConfig(config),
+        setWorkspace(workspace) {
+          config.permissions.workspaceRoot = workspace;
+          contextFilesRef.current.clear();
+          messagesRef.current.splice(0, messagesRef.current.length, ...systemMessages(config));
+          saveConfig(config);
+        },
+      });
+    } catch (error) {
+      setNotice(`Command failed: ${error instanceof Error ? error.message : String(error)}`);
+      setRevision((revision) => revision + 1);
+      return;
+    }
+    if (command.type === "provider-add") {
+      setKeyEntry({ mode: "add", name: command.name, baseURL: command.baseURL, format: command.format, model: command.model, draft: "" });
+      return;
+    }
+    if (command.type === "key-update") {
+      const existing = config.profiles[command.name];
+      setKeyEntry({ mode: "update", name: command.name, baseURL: existing.baseURL, format: existing.format, model: existing.model, draft: "" });
+      return;
+    }
     if (command.type === "exit") { exit(); return; }
     if (command.type === "overlay") { setOverlay(command.overlay); return; }
     if (command.type === "notice") { setNotice(command.message); setRevision((revision) => revision + 1); return; }
@@ -401,7 +444,12 @@ export function ForgeTui({ config }: { config: ForgeConfig }): React.ReactElemen
       }
       return;
     }
-    await session.send(command.type === "prompt" ? command.prompt : value);
+    try {
+      await session.send(command.type === "prompt" ? command.prompt : value);
+    } catch (error) {
+      setBusy(false);
+      setNotice(`Error: ${error instanceof Error ? error.message : String(error)}`);
+    }
   }, [busy, config, exit, flushQueuedPrompt, input, requestApproval, session]);
 
   const openReader = React.useCallback((pane: TuiFocus = focus) => {
@@ -441,6 +489,14 @@ export function ForgeTui({ config }: { config: ForgeConfig }): React.ReactElemen
       if (key.pageDown || key.downArrow) { setReaderOffset((value) => Math.min(Math.max(0, readerLines.length - page), value + (key.pageDown ? page : 1))); return; }
       if (key.home) { setReaderOffset(0); return; }
       if (key.end) { setReaderOffset(Math.max(0, readerLines.length - page)); return; }
+      return;
+    }
+    if (keyEntry) {
+      if (key.ctrl && character === "c") { exit(); return; }
+      if (key.escape) { finishKeyEntry(true); return; }
+      if (key.return) { finishKeyEntry(false); return; }
+      if (key.backspace || key.delete) { setKeyEntry((current) => current && { ...current, draft: current.draft.slice(0, -1) }); return; }
+      if (!key.ctrl && !key.meta && character) { setKeyEntry((current) => current && { ...current, draft: current.draft + character }); }
       return;
     }
     const mouse = config.ui.mouse ? parseMouseInput(character) : undefined;
@@ -650,5 +706,6 @@ export function ForgeTui({ config }: { config: ForgeConfig }): React.ReactElemen
 
     {overlay && <Overlay boxRef={overlayRef} itemRefs={overlayItemRefs} title={overlay.toUpperCase()} query={overlayQuery} items={filteredOverlayItems} selected={selected} theme={theme} footer="Type/filter · click or ↑/↓ + Enter · wheel scroll · Esc close" />}
     {approval && <ApprovalModal boxRef={approvalBoxRef} allowRef={approvalAllowRef} denyRef={approvalDenyRef} state={approval} theme={theme} />}
+    {keyEntry && <KeyEntryModal name={keyEntry.name} mode={keyEntry.mode} draft={keyEntry.draft} theme={theme} />}
   </Box>;
 }

@@ -18,7 +18,7 @@ describe("slash command parser", () => {
     expect(slashCommandNames()).toEqual(expect.arrayContaining([
       "model", "runtime", "workspace", "read", "search", "check", "run",
       "explain", "security", "resume", "export", "usage", "inspect", "stats",
-      "json", "hash", "show", "mkdir", "copy", "mouse", "doctor", "ui",
+      "json", "hash", "show", "mkdir", "copy", "mouse", "doctor", "key",
     ]));
   });
 });

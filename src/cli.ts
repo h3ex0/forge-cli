@@ -1,8 +1,7 @@
 import fs from "node:fs";
 import { Command } from "commander";
-import { banner, printError, printOk, printSystem } from "./ui.js";
+import { printError, printOk, printSystem } from "./ui.js";
 import { configExists, loadConfig, runSetupWizard, saveConfig, type ForgeConfig } from "./config.js";
-import { startRepl } from "./repl.js";
 import { createDriver } from "./providers/index.js";
 import { activateLocalModel, inspectLocalModel, listRuntimeSummaries, pullLocalModel } from "./runtime/service.js";
 import { startRuntime, stopOwnedRuntime } from "./runtime/process.js";
@@ -20,32 +19,22 @@ async function interactiveConfig(): Promise<ForgeConfig> {
   return configExists() ? loadConfig() : runSetupWizard();
 }
 
-async function startInteractive(): Promise<void> {
-  banner("Forge", "Local-first, multi-provider AI coding agent.");
-  const config = await interactiveConfig();
-  if (!config.activeProfile || !config.profiles[config.activeProfile]) throw new Error("No active profile. Use `forge model use` or add a provider.");
-  await startRepl(config);
-}
-
-/** Decide whether the default command can safely launch the full-screen interface. */
-export function shouldLaunchTui(config: ForgeConfig, terminal: { inputIsTTY?: boolean; outputIsTTY?: boolean; columns?: number; rows?: number }): boolean {
-  return config.ui.mode === "tui"
-    && terminal.inputIsTTY === true
+/** Decide whether the terminal can host Forge's full-screen interface. */
+export function shouldLaunchTui(terminal: { inputIsTTY?: boolean; outputIsTTY?: boolean; columns?: number; rows?: number }): boolean {
+  return terminal.inputIsTTY === true
     && terminal.outputIsTTY === true
     && (terminal.columns ?? 80) >= 72
     && (terminal.rows ?? 24) >= 18;
 }
 
-async function startPreferredInterface(): Promise<void> {
+async function startInteractive(): Promise<void> {
   const config = await interactiveConfig();
   if (!config.activeProfile || !config.profiles[config.activeProfile]) throw new Error("No active profile. Use `forge model use` or add a provider.");
-  if (shouldLaunchTui(config, { inputIsTTY: process.stdin.isTTY, outputIsTTY: process.stdout.isTTY, columns: process.stdout.columns, rows: process.stdout.rows })) {
-    const { startTui } = await import("./tui.js");
-    await startTui(config);
-    return;
+  if (!shouldLaunchTui({ inputIsTTY: process.stdin.isTTY, outputIsTTY: process.stdout.isTTY, columns: process.stdout.columns, rows: process.stdout.rows })) {
+    throw new Error("Forge's interactive workspace needs a real terminal at least 72x18. Resize your terminal, or use `forge run \"<prompt>\"` for non-interactive use.");
   }
-  banner("Forge", "Local-first, multi-provider AI coding agent.");
-  await startRepl(config);
+  const { startTui } = await import("./tui.js");
+  await startTui(config);
 }
 
 async function runPrompt(prompt: string, options: { json?: boolean; model?: string; offline?: boolean }): Promise<void> {
@@ -110,12 +99,9 @@ function addCompletionCommand(program: Command): void {
 export function createProgram(): Command {
   const program = new Command();
   program.name("forge").description("Local-first, multi-provider AI coding agent").version(VERSION).showHelpAfterError();
-  program.action(startPreferredInterface);
-  program.command("chat").description("Open the enhanced interactive REPL").action(startInteractive);
-  program.command("tui").description("Open the full-screen terminal workspace").action(async () => {
-    const { startTui } = await import("./tui.js");
-    await startTui(await interactiveConfig());
-  });
+  program.action(startInteractive);
+  program.command("chat").description("Open Forge's full-screen terminal workspace").action(startInteractive);
+  program.command("tui").description("Open Forge's full-screen terminal workspace").action(startInteractive);
   program.command("run <prompt...>").description("Run one non-interactive prompt")
     .option("--model <reference>", "Profile model id or runtime:model reference")
     .option("--offline", "Require local execution")

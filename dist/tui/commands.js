@@ -230,13 +230,6 @@ export function executeTuiCommand(input, context) {
         case "docs": return arg ? { type: "prompt", prompt: `Create or improve documentation for ${arg}. Keep it accurate, practical, and consistent with the codebase.` } : { type: "notice", message: "Usage: /docs <target>" };
         case "security": return { type: "prompt", prompt: `Audit ${arg || "the current workspace changes"} for security weaknesses. Inspect the code, rank findings by severity, and provide actionable fixes.` };
         case "summarize": return { type: "prompt", prompt: "Summarize the current work: goal, relevant changes, Git state, verification completed, remaining risks, and recommended next action." };
-        case "ui": {
-            if (arg !== "inline" && arg !== "tui")
-                return { type: "notice", message: `UI mode is ${config.ui.mode}. Usage: /ui inline|tui` };
-            config.ui.mode = arg;
-            context.persist();
-            return { type: "notice", message: `Default UI set to ${arg}.` };
-        }
         case "theme": {
             config.ui.theme = config.ui.theme === "flame" ? "cool" : config.ui.theme === "cool" ? "contrast" : config.ui.theme === "contrast" ? "mono" : "flame";
             context.persist();
@@ -296,8 +289,30 @@ export function executeTuiCommand(input, context) {
                 context.persist();
                 return { type: "notice", message: `Using provider ${name}.` };
             }
-            return { type: "notice", message: "Provider creation requires masked input and remains available in forge chat." };
+            if (sub === "add") {
+                const [name, baseURL, formatArg, ...rest] = parsed.args.slice(1);
+                const knownFormats = ["openai", "anthropic", "gemini"];
+                const formatGiven = knownFormats.includes((formatArg ?? "").toLowerCase());
+                const format = (formatGiven ? formatArg.toLowerCase() : "openai");
+                const model = (formatGiven ? rest : [formatArg, ...rest].filter(Boolean)).join(" ");
+                if (!name || !baseURL || !model)
+                    return { type: "notice", message: "Usage: /provider add <name> <base-url> [openai|anthropic|gemini] <default-model>" };
+                if (!/^https?:\/\//i.test(baseURL))
+                    return { type: "notice", message: "Base URL must start with http:// or https://." };
+                return { type: "provider-add", name, baseURL, format, model };
+            }
+            return { type: "notice", message: "Usage: /provider list | use <name> | add <name> <base-url> [format] <model>" };
         }
-        default: return { type: "notice", message: `/${parsed.name} requires the classic masked/administrative flow. Run forge chat for this operation.` };
+        case "key": {
+            const name = parsed.args[0];
+            if (!name)
+                return { type: "notice", message: "Usage: /key <profile> — you'll be prompted to type the key without it appearing in the composer." };
+            if (!config.profiles[name])
+                return { type: "notice", message: `Unknown profile "${name}". Use /provider list.` };
+            if (parsed.args.length > 1)
+                return { type: "notice", message: "/key <profile> <key> is disabled — the key would land in scrollback and shell history. Run /key <profile> to enter it masked instead." };
+            return { type: "key-update", name };
+        }
+        default: return { type: "notice", message: `Unknown command /${parsed.name}. Run /help for a list.` };
     }
 }

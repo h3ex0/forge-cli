@@ -16,6 +16,7 @@ Forge is pre-1.0 software. Security fixes are applied to the latest version on t
 - Structured commands use direct process execution. The compatibility `bash_exec` tool is high-risk and always policy-gated.
 - Network fetches accept only HTTP(S), reject URL credentials, resolve DNS, and block loopback, private, link-local, and cloud-metadata-style destinations, including redirects.
 - Remote provider keys use the OS credential manager when available, with profile-specific environment variables as a headless fallback.
+- `/provider add` and `/key` capture API keys through a masked TUI prompt; keys are never echoed, added to the composer, or written to any history file.
 - File writes are atomic, tool output is capped, and an agent turn is limited to ten tool iterations.
 - Model and tool text is stripped of terminal control sequences before the TUI renders it.
 - The TUI uses blocking approval overlays and records a recovery session before approved write, process, or shell operations.
@@ -43,7 +44,6 @@ Forge is pre-1.0 software. Security fixes are applied to the latest version on t
 - Provider retries and context compaction are not yet comprehensive; some third-party child processes may take time to honor cancellation.
 - TUI recovery checkpoints preserve conversation state, not filesystem contents; they are not a substitute for Git or backups.
 - Third-party local runtimes and downloaded model files have their own supply-chain and license risks.
-- `/key` is retained for compatibility but can expose a secret through visible terminal history; prefer the OS credential store or environment variables.
 - A model can still be influenced by prompt injection. Policy gates reduce impact but cannot establish the intent or trustworthiness of model output.
 
 Run Forge in a narrowly scoped workspace. Do not approve commands you would not run yourself, and do not place unrelated secrets inside the workspace.

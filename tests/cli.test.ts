@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
 import { createProgram, shouldLaunchTui } from "../src/cli.js";
-import { migrateConfig } from "../src/config.js";
 
 describe("top-level CLI", () => {
   it("exposes interactive, automation, model, runtime, and diagnostics commands", () => {
@@ -12,12 +11,9 @@ describe("top-level CLI", () => {
     expect(createProgram().version()).toBe("0.5.2");
   });
 
-  it("uses TUI only for capable interactive terminals", () => {
-    const config = migrateConfig(undefined);
-    expect(shouldLaunchTui(config, { inputIsTTY: true, outputIsTTY: true, columns: 120, rows: 30 })).toBe(true);
-    expect(shouldLaunchTui(config, { inputIsTTY: false, outputIsTTY: true, columns: 120, rows: 30 })).toBe(false);
-    expect(shouldLaunchTui(config, { inputIsTTY: true, outputIsTTY: true, columns: 60, rows: 30 })).toBe(false);
-    config.ui.mode = "inline";
-    expect(shouldLaunchTui(config, { inputIsTTY: true, outputIsTTY: true, columns: 120, rows: 30 })).toBe(false);
+  it("requires a capable interactive terminal", () => {
+    expect(shouldLaunchTui({ inputIsTTY: true, outputIsTTY: true, columns: 120, rows: 30 })).toBe(true);
+    expect(shouldLaunchTui({ inputIsTTY: false, outputIsTTY: true, columns: 120, rows: 30 })).toBe(false);
+    expect(shouldLaunchTui({ inputIsTTY: true, outputIsTTY: true, columns: 60, rows: 30 })).toBe(false);
   });
 });

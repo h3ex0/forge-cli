@@ -13,12 +13,27 @@ function isPrivateIPv4(ip) {
         (a === 192 && b === 168) ||
         a >= 224);
 }
+function ipv4MappedAddress(ip) {
+    const dotted = /^::ffff:(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})$/i.exec(ip);
+    if (dotted)
+        return dotted[1];
+    const hex = /^::ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/i.exec(ip);
+    if (hex) {
+        const high = parseInt(hex[1], 16);
+        const low = parseInt(hex[2], 16);
+        return [(high >> 8) & 0xff, high & 0xff, (low >> 8) & 0xff, low & 0xff].join(".");
+    }
+    return null;
+}
 function isPrivateAddress(ip) {
     if (net.isIPv4(ip))
         return isPrivateIPv4(ip);
     if (!net.isIPv6(ip))
         return true;
     const normalized = ip.toLowerCase();
+    const mapped = ipv4MappedAddress(normalized);
+    if (mapped)
+        return isPrivateIPv4(mapped);
     return normalized === "::1" || normalized === "::" || normalized.startsWith("fc") || normalized.startsWith("fd") || normalized.startsWith("fe8") || normalized.startsWith("fe9") || normalized.startsWith("fea") || normalized.startsWith("feb");
 }
 export async function validatePublicUrl(input) {

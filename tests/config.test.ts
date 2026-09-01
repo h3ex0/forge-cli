@@ -24,25 +24,24 @@ describe("configuration migration", () => {
     });
     expect(result.permissions.mode).toBe("balanced");
     expect(result.runtimes.ollama.baseURL).toBe("http://127.0.0.1:11434/v1");
-    expect(result.ui.mode).toBe("tui");
     expect(result.ui.mouse).toBe(false);
   });
 
-  it("moves v2 installations to the new TUI-first default", () => {
+  it("drops the retired inline-UI preference when migrating v2 installations", () => {
     const result = migrateConfig({
       ...structuredClone(DEFAULT_CONFIG),
       schemaVersion: 2,
       ui: { mode: "inline", theme: "flame" },
     });
     expect(result.schemaVersion).toBe(5);
-    expect(result.ui.mode).toBe("tui");
+    expect(result.ui).not.toHaveProperty("mode");
     expect(result.ui.mouse).toBe(false);
   });
 
   it("adds selection-first mouse controls when migrating v3 configurations", () => {
     const previous = { ...structuredClone(DEFAULT_CONFIG), schemaVersion: 3, ui: { mode: "tui", theme: "cool" } };
     const result = migrateConfig(previous);
-    expect(result).toMatchObject({ schemaVersion: 5, ui: { mode: "tui", theme: "cool", mouse: false } });
+    expect(result).toMatchObject({ schemaVersion: 5, ui: { theme: "cool", mouse: false } });
   });
 
   it("migrates v4 mouse capture to the selection-first default", () => {

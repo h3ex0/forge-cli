@@ -19,3 +19,6 @@ Thumbs.db
 
 # TypeScript build cache
 *.tsbuildinfo
+
+# Local MCP tooling state
+.serena/

@@ -3,7 +3,7 @@ import path from "node:path";
 import os from "node:os";
 import readline from "node:readline";
 import { z } from "zod";
-import { colors, printOk, printSystem } from "./ui.js";
+import { colors, printOk, printSystem, printWarn } from "./ui.js";
 import { loadProfileSecret, storeProfileSecret } from "./security/secrets.js";
 import { clearProfileUsage } from "./usage-store.js";
 const CONFIG_DIR = path.join(os.homedir(), ".forge");
@@ -36,7 +36,7 @@ const configSchema = z.object({
         offline: z.boolean(),
         askBeforeCloud: z.boolean(),
     }),
-    ui: z.object({ mode: z.enum(["inline", "tui"]), theme: z.string(), mouse: z.boolean() }),
+    ui: z.object({ theme: z.string(), mouse: z.boolean() }),
     runtimes: z.record(z.enum(["ollama", "lmstudio", "llamacpp", "openai-compatible"]), z.object({ baseURL: z.string(), executable: z.string().optional(), modelRoots: z.array(z.string()).optional() })),
 });
 export const DEFAULT_CONFIG = {
@@ -45,7 +45,7 @@ export const DEFAULT_CONFIG = {
     profiles: {},
     permissions: { mode: "balanced", workspaceRoot: process.cwd() },
     routing: { mode: "manual", offline: false, askBeforeCloud: true },
-    ui: { mode: "tui", theme: "flame", mouse: false },
+    ui: { theme: "flame", mouse: false },
     runtimes: {
         ollama: { baseURL: "http://127.0.0.1:11434/v1", executable: "ollama" },
         lmstudio: { baseURL: "http://127.0.0.1:1234/v1", executable: "lms" },
@@ -66,7 +66,7 @@ export function migrateConfig(raw) {
         return configSchema.parse({ ...candidate, schemaVersion: 5, ui: { ...(candidate.ui ?? {}), mouse: false } });
     }
     if (candidate.schemaVersion === 2) {
-        return configSchema.parse({ ...candidate, schemaVersion: 5, ui: { ...(candidate.ui ?? {}), mode: "tui", mouse: false } });
+        return configSchema.parse({ ...candidate, schemaVersion: 5, ui: { ...(candidate.ui ?? {}), mouse: false } });
     }
     const legacyProfiles = (candidate.profiles && typeof candidate.profiles === "object" ? candidate.profiles : {});
     const profiles = {};
@@ -170,14 +170,28 @@ export async function runSetupWizard() {
         }
         else {
             profileName = (await ask(rl, colors.user("Name for this profile (e.g. myprovider): "))) || `provider${Object.keys(cfg.profiles).length + 1}`;
-            baseURL = await ask(rl, colors.user("Base URL (e.g. https://api.example.com/v1): "));
+            baseURL = "";
+            while (!/^https?:\/\//i.test(baseURL)) {
+                baseURL = await ask(rl, colors.user("Base URL (e.g. https://api.example.com/v1): "));
+                if (!/^https?:\/\//i.test(baseURL))
+                    printWarn("Base URL must start with http:// or https://.");
+            }
             const fmtAns = (await ask(rl, colors.user("API format [openai/anthropic/gemini] (default openai): "))).toLowerCase();
             format = (["openai", "anthropic", "gemini"].includes(fmtAns) ? fmtAns : "openai");
-            defaultModel = await ask(rl, colors.user("Default model id: "));
+            defaultModel = "";
+            while (!defaultModel) {
+                defaultModel = await ask(rl, colors.user("Default model id: "));
+                if (!defaultModel)
+                    printWarn("A default model id is required.");
+            }
         }
         const apiKey = await ask(rl, colors.user(`API key for ${profileName}: `));
-        const modelAns = await ask(rl, colors.user(`Default model [${defaultModel}]: `));
-        const model = modelAns || defaultModel;
+        let model = defaultModel;
+        while (!model) {
+            model = (await ask(rl, colors.user(`Default model [${defaultModel}]: `))) || defaultModel;
+            if (!model)
+                printWarn("A default model id is required.");
+        }
         cfg.profiles[profileName] = { baseURL, apiKey, format, model, kind: "remote" };
         if (first) {
             cfg.activeProfile = profileName;
