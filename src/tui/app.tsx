@@ -837,7 +837,12 @@ export function ForgeTui({ config }: { config: ForgeConfig }): React.ReactElemen
   // messages ourselves so a truncation cap can be enforced on rendered rows
   // rather than raw "\n"-delimited lines (a single very long line with no
   // newlines would otherwise ignore any line-count-based cap entirely).
-  const conversationPaneWidth = Math.max(20, dimensions.columns - (wide ? 29 : 0) - (medium ? (wide ? 33 : 29) : 0) - 4);
+  // Activity/context widths below are each pane's own declared `width`
+  // (which already includes that pane's border+padding, confirmed against
+  // Ink's actual layout output — not just their inner content width).
+  // Conversation's own border(2)+paddingX(2) is subtracted separately since
+  // it isn't a fixed-width pane; its share of the row comes from flexGrow.
+  const conversationPaneWidth = Math.max(20, dimensions.columns - (wide ? 25 : 0) - (medium ? (wide ? 29 : 25) : 0) - 4);
   const suggestions = tuiCommandSuggestions(input);
   const estimatedCostUsd = estimateCost(profile, usage, pricing);
   const contextTokens = estimateMessageTokens(messagesRef.current);
