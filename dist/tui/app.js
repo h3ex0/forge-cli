@@ -9,6 +9,7 @@ import { AgentSession } from "../agent/session.js";
 import { createTools } from "../tools/index.js";
 import { decidePermission } from "../security/policy.js";
 import { fetchModels } from "../providers/models.js";
+import { createDriver } from "../providers/index.js";
 import { inspectLocalModel, listRuntimeSummaries, pullLocalModel } from "../runtime/service.js";
 import { startRuntime, stopOwnedRuntime } from "../runtime/process.js";
 import { listSessions, loadSession, saveSession } from "../session.js";
@@ -398,6 +399,38 @@ export function ForgeTui({ config }) {
             messagesRef.current.splice(0, messagesRef.current.length, ...command.messages);
             setNotice(`Loaded ${command.name}`);
             setRevision((revision) => revision + 1);
+            return;
+        }
+        if (command.type === "compact") {
+            const history = messagesRef.current.filter((message) => message.role !== "system");
+            if (history.length < 2) {
+                setNotice("Nothing to compact yet.");
+                return;
+            }
+            setBusy(true);
+            setNotice("Compacting conversation…");
+            operationAbortRef.current = new AbortController();
+            try {
+                const driver = createDriver(profile);
+                let summary = "";
+                let failure;
+                await driver.streamChat([...history, { role: "user", content: "Summarize this entire conversation concisely but completely: the goal, key decisions, code or file changes made, current state, and any open next steps. Write it as a standalone note — it will fully replace this conversation's history to free up context, so do not omit anything a continuation would need." }], [], profile.model, { onTextDelta: (delta) => { summary += delta; }, onToolCallsComplete: () => { }, onDone: () => { }, onError: (error) => { failure = error; } }, operationAbortRef.current.signal);
+                if (failure)
+                    throw failure;
+                const before = estimateMessageTokens(messagesRef.current);
+                messagesRef.current.splice(0, messagesRef.current.length, ...systemMessages(config), { role: "assistant", content: `[Conversation compacted from ${history.length} messages]\n\n${summary.trim()}` });
+                const after = estimateMessageTokens(messagesRef.current);
+                setNotice(`Compacted ${history.length} messages (~${before.toLocaleString("en-US")} → ~${after.toLocaleString("en-US")} tokens).`);
+            }
+            catch (error) {
+                setNotice(`Compaction failed: ${error instanceof Error ? error.message : String(error)}`);
+            }
+            finally {
+                operationAbortRef.current = null;
+                setBusy(false);
+                setRevision((value) => value + 1);
+                flushQueuedPrompt();
+            }
             return;
         }
         if (command.type === "model-info") {
@@ -930,9 +963,11 @@ export function ForgeTui({ config }) {
     const medium = dimensions.columns >= 90;
     const suggestions = tuiCommandSuggestions(input);
     const estimatedCostUsd = estimateCost(profile, usage, pricing);
-    const usageLine = renderUsageStatus(config, { ...usage, contextTokens: estimateMessageTokens(messagesRef.current), estimatedCostUsd, subscriptionTokensUsed }, dimensions.columns - 2);
+    const contextTokens = estimateMessageTokens(messagesRef.current);
+    const usageLine = renderUsageStatus(config, { ...usage, contextTokens, estimatedCostUsd, subscriptionTokensUsed }, dimensions.columns - 2);
     const limitExceeded = (profile.subscription?.tokenLimit != null && subscriptionTokensUsed >= profile.subscription.tokenLimit)
-        || (profile.subscription?.costLimitUsd != null && estimatedCostUsd != null && estimatedCostUsd >= profile.subscription.costLimitUsd);
+        || (profile.subscription?.costLimitUsd != null && estimatedCostUsd != null && estimatedCostUsd >= profile.subscription.costLimitUsd)
+        || (profile.contextWindowTokens != null && contextTokens / profile.contextWindowTokens >= 0.9);
     const cursorView = `${input.slice(0, cursor)}█${input.slice(cursor)}`;
     const readerLines = reader ? wrapReaderText(reader.content, dimensions.columns) : [];
     const readerPageSize = Math.max(1, dimensions.rows - 3);

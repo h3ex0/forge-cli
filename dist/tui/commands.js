@@ -104,8 +104,23 @@ export function executeTuiCommand(input, context) {
                 const file = parsed.args.slice(1).join(" ");
                 return { type: "notice", message: context.contextFiles.delete(file) ? `Dropped ${file}.` : `${file} was not pinned.` };
             }
+            if (sub === "window") {
+                const tokens = parsed.args[1];
+                if (tokens === "clear") {
+                    delete profile.contextWindowTokens;
+                    context.persist();
+                    return { type: "notice", message: "Context-window warning cleared." };
+                }
+                const value = Number(tokens);
+                if (!Number.isInteger(value) || value <= 0)
+                    return { type: "notice", message: `Context window: ${profile.contextWindowTokens?.toLocaleString("en-US") ?? "not set"}. Usage: /context window <tokens>|clear` };
+                profile.contextWindowTokens = value;
+                context.persist();
+                return { type: "notice", message: `Context window for ${config.activeProfile} set to ${value.toLocaleString("en-US")} tokens.` };
+            }
             return { type: "overlay", overlay: "context" };
         }
+        case "compact": return { type: "compact" };
         case "save":
         case "checkpoint": {
             const name = arg || defaultSessionName();

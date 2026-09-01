@@ -22,6 +22,16 @@ describe("usage status", () => {
     expect(line).toContain("rate tokens 8.0k/10k left");
   });
 
+  it("warns when context usage approaches the configured window", () => {
+    const config = migrateConfig({ activeProfile: "test", profiles: { test: { baseURL: "https://example.test", apiKey: "", format: "openai", model: "qwen" } } });
+    config.profiles.test.contextWindowTokens = 10_000;
+    const safe = renderUsageStatus(config, { promptTokens: 0, completionTokens: 0, contextTokens: 5_000 });
+    expect(safe).toContain("context ~5.0k/10k");
+    expect(safe).not.toContain("!");
+    const near = renderUsageStatus(config, { promptTokens: 0, completionTokens: 0, contextTokens: 9_500 });
+    expect(near).toContain("! context ~9.5k/10k");
+  });
+
   it("estimates context and formats compact values", () => {
     expect(estimateMessageTokens([{ content: "12345678" }])).toBe(2);
     expect(compactNumber(12_000)).toBe("12k");

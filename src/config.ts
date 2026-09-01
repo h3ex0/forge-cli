@@ -26,6 +26,8 @@ export interface Profile {
     costLimitUsd?: number;
     resetAt?: string;
   };
+  /** Model's context-window size in tokens, for truncation warnings. Unset when unknown. */
+  contextWindowTokens?: number;
 }
 
 export interface ForgeConfig {
@@ -55,6 +57,7 @@ const profileSchema = z.object({
     costLimitUsd: z.number().positive().optional(),
     resetAt: z.string().datetime({ offset: true }).optional(),
   }).optional(),
+  contextWindowTokens: z.number().int().positive().optional(),
 });
 
 const configSchema = z.object({

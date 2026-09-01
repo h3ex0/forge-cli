@@ -96,6 +96,20 @@ describe("TUI commands", () => {
     expect(executeTuiCommand("/key unknown-profile", value)).toMatchObject({ type: "notice", message: expect.stringContaining("Unknown profile") });
   });
 
+  it("configures and clears a context-window warning threshold", () => {
+    const value = context();
+    expect(executeTuiCommand("/context window nope", value)).toMatchObject({ type: "notice", message: expect.stringContaining("not set") });
+    expect(executeTuiCommand("/context window 128000", value)).toMatchObject({ type: "notice", message: expect.stringContaining("128,000") });
+    expect(value.config.profiles.test.contextWindowTokens).toBe(128000);
+    expect(executeTuiCommand("/context window clear", value)).toMatchObject({ type: "notice" });
+    expect(value.config.profiles.test.contextWindowTokens).toBeUndefined();
+  });
+
+  it("maps /compact to a dedicated compaction action", () => {
+    const value = context();
+    expect(executeTuiCommand("/compact", value)).toEqual({ type: "compact" });
+  });
+
   it("builds a subagent delegation prompt, optionally pinned to a provider profile", () => {
     const value = context();
     expect(executeTuiCommand("/agent", value)).toMatchObject({ type: "notice", message: expect.stringContaining("Usage:") });

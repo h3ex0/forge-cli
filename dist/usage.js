@@ -25,8 +25,12 @@ export function renderUsageStatus(config, usage, columns = 160) {
         return "No active profile";
     const total = usage.promptTokens + usage.completionTokens;
     const parts = [`tokens ${compactNumber(total)} (in ${compactNumber(usage.promptTokens)} / out ${compactNumber(usage.completionTokens)})`];
-    if (usage.contextTokens != null)
-        parts.push(`context ~${compactNumber(usage.contextTokens)}`);
+    if (usage.contextTokens != null) {
+        const window = profile.contextWindowTokens;
+        const ratio = window ? usage.contextTokens / window : undefined;
+        const warn = ratio != null && ratio >= 0.9 ? "! " : "";
+        parts.push(window ? `${warn}context ~${compactNumber(usage.contextTokens)}/${compactNumber(window)}` : `context ~${compactNumber(usage.contextTokens)}`);
+    }
     if (usage.estimatedCostUsd != null)
         parts.push(`cost $${usage.estimatedCostUsd.toFixed(usage.estimatedCostUsd < 0.1 ? 4 : 2)}`);
     const subscription = profile.subscription;

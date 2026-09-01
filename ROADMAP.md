@@ -19,7 +19,7 @@ Forge is evolving into a local-first, provider-independent terminal agent that c
 
 ## Shipped in v0.3 — TUI-first workspace
 
-- TUI is the default for supported interactive terminals, with inline fallback for pipes and small terminals.
+- TUI is the default for supported interactive terminals. (The inline REPL fallback described here was later removed; a terminal too small or non-interactive for the TUI now gets a direct error pointing at `forge run "<prompt>"` instead.)
 - Shared `AgentSession` powers TUI and inline tool execution, permissions, messages, usage, and cancellation.
 - Responsive conversation, activity, and context panes.
 - Searchable command, model, file-context, and session overlays.
@@ -48,6 +48,13 @@ Forge is evolving into a local-first, provider-independent terminal agent that c
 - Workspace-bounded directory creation and no-overwrite file copying behind write approvals.
 - Config schema v5 migration, instant `Ctrl+T`/footer mouse toggling, and shared inline/TUI slash commands for every new tool.
 - Borderless focused-pane reader for clean terminal selection and untruncated conversation, activity, composer, and session/error text.
+
+## Since v0.5.2 (unreleased)
+
+- `forge provider list|use|add|remove` and `forge key set`: non-interactive provider/key management outside the TUI, with hidden-input key entry and `FORGE_HOME` to relocate the config directory.
+- `spawn_agent` tool and `/agent [profile] <task>`: delegate a self-contained task to a nested subagent (its own context, tool loop, optionally a different provider) that reports back a single result.
+- Full-screen frames for the command/model/file/session overlays, the approval prompt, and provider/key entry, replacing the earlier floating boxes that let background chat text bleed through.
+- Keyboard- and mouse-navigable approval choice (was Y/N-only with no visible way to select), plus `Ctrl+A`/`[Mode]` to cycle permission mode without needing to already know `/mode`.
 
 ## v0.6 — Reliability and recovery
 

@@ -22,6 +22,7 @@ const profileSchema = z.object({
         costLimitUsd: z.number().positive().optional(),
         resetAt: z.string().datetime({ offset: true }).optional(),
     }).optional(),
+    contextWindowTokens: z.number().int().positive().optional(),
 });
 const configSchema = z.object({
     schemaVersion: z.literal(5),
