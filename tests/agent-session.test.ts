@@ -64,6 +64,56 @@ describe("AgentSession", () => {
     expect(messages.at(-1)).toEqual({ role: "assistant", content: "done" });
   });
 
+  it("delegates to a subagent via spawn_agent and folds its report and usage back in", async () => {
+    let call = 0;
+    const driver: ChatDriver = {
+      async streamChat(_messages, _tools, _model, callbacks) {
+        call += 1;
+        if (call === 1) {
+          callbacks.onToolCallsComplete([{ id: "1", name: "spawn_agent", arguments: JSON.stringify({ task: "research X" }) }]);
+          callbacks.onDone({ promptTokens: 5, completionTokens: 1 });
+        } else if (call === 2) {
+          callbacks.onTextDelta("sub result");
+          callbacks.onDone({ promptTokens: 3, completionTokens: 2 });
+        } else {
+          callbacks.onTextDelta("done");
+          callbacks.onDone({ promptTokens: 1, completionTokens: 1 });
+        }
+      },
+    };
+    vi.mocked(createDriver).mockReturnValue(driver);
+    vi.mocked(createTools).mockReturnValue([]);
+    const approve = vi.fn(async () => true);
+    const messages: ChatMessage[] = [{ role: "system", content: "system" }];
+    const session = new AgentSession({ config: config(), messages, approve, recordUsage: () => undefined });
+
+    await session.send("delegate this");
+
+    expect(approve).toHaveBeenCalledOnce();
+    expect(messages).toContainEqual(expect.objectContaining({ role: "tool", name: "spawn_agent", content: "sub result" }));
+    expect(session.usage).toMatchObject({ promptTokens: 9, completionTokens: 4 });
+  });
+
+  it("refuses to spawn a subagent for an unknown provider profile", async () => {
+    let call = 0;
+    const driver: ChatDriver = {
+      async streamChat(_messages, _tools, _model, callbacks) {
+        call += 1;
+        if (call === 1) callbacks.onToolCallsComplete([{ id: "1", name: "spawn_agent", arguments: JSON.stringify({ task: "x", profile: "ghost" }) }]);
+        else callbacks.onTextDelta("done");
+        callbacks.onDone();
+      },
+    };
+    vi.mocked(createDriver).mockReturnValue(driver);
+    vi.mocked(createTools).mockReturnValue([]);
+    const messages: ChatMessage[] = [{ role: "system", content: "system" }];
+    const session = new AgentSession({ config: config(), messages, approve: async () => true, recordUsage: () => undefined });
+
+    await session.send("delegate this");
+
+    expect(messages).toContainEqual(expect.objectContaining({ role: "tool", name: "spawn_agent", content: expect.stringContaining("Unknown provider profile") }));
+  });
+
   it("cancels an active provider request", async () => {
     const driver: ChatDriver = {
       async streamChat(_messages, _tools, _model, callbacks, signal) {

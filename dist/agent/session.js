@@ -3,6 +3,7 @@ import { createTools } from "../tools/index.js";
 import { decidePermission } from "../security/policy.js";
 import { recordUsage } from "../usage-store.js";
 const MAX_TOOL_ITERATIONS = 40;
+const DEFAULT_SUBAGENT_DEPTH = 1;
 function parseToolArguments(call) {
     try {
         const value = JSON.parse(call.arguments || "{}");
@@ -23,6 +24,7 @@ export class AgentSession {
     approve;
     getContextMessages;
     usageRecorder;
+    subagentDepth;
     listeners = new Set();
     abortController = null;
     constructor(options) {
@@ -32,6 +34,64 @@ export class AgentSession {
         this.approve = options.approve;
         this.getContextMessages = options.getContextMessages ?? (() => this.messages);
         this.usageRecorder = options.recordUsage ?? ((profile, promptTokens, completionTokens) => { recordUsage(profile, promptTokens, completionTokens); });
+        this.subagentDepth = options.subagentDepth ?? DEFAULT_SUBAGENT_DEPTH;
+    }
+    /** Build a tool that delegates a self-contained task to a fresh, nested AgentSession. */
+    createSpawnAgentTool() {
+        return {
+            def: {
+                name: "spawn_agent",
+                description: "Delegate a self-contained task to a fresh subagent with its own tool loop and context window. Use it to keep exploratory or multi-step side-work out of the main conversation; it returns only the subagent's final report. Optionally target a different configured provider profile.",
+                parameters: {
+                    type: "object",
+                    properties: {
+                        task: { type: "string", description: "A complete, self-contained description of the task. The subagent has no memory of this conversation." },
+                        profile: { type: "string", description: "Optional configured provider profile name to run the subagent on. Defaults to the active profile." },
+                    },
+                    required: ["task"],
+                    additionalProperties: false,
+                },
+            },
+            risk: "process",
+            destructive: true,
+            execute: async (args, signal) => {
+                const task = typeof args.task === "string" ? args.task : "";
+                if (!task.trim())
+                    throw new Error("spawn_agent requires a non-empty task.");
+                const profileName = typeof args.profile === "string" && args.profile ? args.profile : this.config.activeProfile;
+                if (!this.config.profiles[profileName])
+                    throw new Error(`Unknown provider profile "${profileName}".`);
+                const subConfig = { ...this.config, activeProfile: profileName };
+                const subMessages = [{ role: "system", content: "You are a focused subagent working inside the same workspace as the primary agent. Complete exactly the delegated task, using tools as needed, then reply with a concise final report of what you found or changed. You cannot ask the user questions — make reasonable assumptions and note them." }];
+                const subSession = new AgentSession({
+                    config: subConfig,
+                    messages: subMessages,
+                    approve: this.approve,
+                    recordUsage: this.usageRecorder,
+                    subagentDepth: this.subagentDepth - 1,
+                });
+                let failure;
+                const unsubscribe = subSession.subscribe((event) => {
+                    if (event.type === "turn.failed")
+                        failure = event.error;
+                });
+                try {
+                    await subSession.send(task);
+                }
+                finally {
+                    unsubscribe();
+                    this.usage.promptTokens += subSession.usage.promptTokens;
+                    this.usage.completionTokens += subSession.usage.completionTokens;
+                    this.emit({ type: "usage.updated", usage: { ...this.usage } });
+                }
+                if (signal?.aborted)
+                    throw new Error("Cancelled.");
+                if (failure)
+                    throw failure;
+                const report = subMessages.filter((message) => message.role === "assistant").at(-1)?.content;
+                return report?.trim() || "(subagent completed without producing a final report)";
+            },
+        };
     }
     get busy() {
         return this.abortController !== null;
@@ -86,6 +146,8 @@ export class AgentSession {
             throw new Error(`Active profile "${this.config.activeProfile}" is not configured.`);
         const driver = createDriver(profile);
         const allTools = createTools({ workspaceRoot: this.config.permissions.workspaceRoot });
+        if (this.subagentDepth > 0)
+            allTools.push(this.createSpawnAgentTool());
         const availableTools = this.config.routing.offline ? allTools.filter((item) => item.risk !== "network") : allTools;
         for (let iteration = 0; iteration < MAX_TOOL_ITERATIONS; iteration += 1) {
             if (signal.aborted)

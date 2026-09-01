@@ -95,4 +95,16 @@ describe("TUI commands", () => {
     expect(executeTuiCommand("/key test sk-plaintext", value)).toMatchObject({ type: "notice", message: expect.stringContaining("disabled") });
     expect(executeTuiCommand("/key unknown-profile", value)).toMatchObject({ type: "notice", message: expect.stringContaining("Unknown profile") });
   });
+
+  it("builds a subagent delegation prompt, optionally pinned to a provider profile", () => {
+    const value = context();
+    expect(executeTuiCommand("/agent", value)).toMatchObject({ type: "notice", message: expect.stringContaining("Usage:") });
+    expect(executeTuiCommand("/agent research the auth module", value)).toMatchObject({
+      type: "prompt",
+      prompt: expect.stringContaining("research the auth module"),
+    });
+    const pinned = executeTuiCommand("/agent test dig into the failing test", value);
+    expect(pinned).toMatchObject({ type: "prompt", prompt: expect.stringContaining('profile "test"') });
+    expect(pinned).toMatchObject({ prompt: expect.stringContaining("dig into the failing test") });
+  });
 });

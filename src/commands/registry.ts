@@ -49,6 +49,7 @@ export const SLASH_COMMANDS = [
   { name: "docs", usage: "/docs <target>", description: "Create or improve documentation" },
   { name: "security", usage: "/security [scope]", description: "Audit code for security weaknesses" },
   { name: "summarize", usage: "/summarize", description: "Summarize the current work and state" },
+  { name: "agent", usage: "/agent [profile] <task>", description: "Delegate a task to a subagent, optionally on another provider profile" },
   { name: "tools", usage: "/tools", description: "List tools and risk levels" },
   { name: "doctor", usage: "/doctor", description: "Diagnose configuration and runtimes" },
   { name: "status", usage: "/status", description: "Show active model, routing, and permission status" },

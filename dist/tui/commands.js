@@ -230,6 +230,16 @@ export function executeTuiCommand(input, context) {
         case "docs": return arg ? { type: "prompt", prompt: `Create or improve documentation for ${arg}. Keep it accurate, practical, and consistent with the codebase.` } : { type: "notice", message: "Usage: /docs <target>" };
         case "security": return { type: "prompt", prompt: `Audit ${arg || "the current workspace changes"} for security weaknesses. Inspect the code, rank findings by severity, and provide actionable fixes.` };
         case "summarize": return { type: "prompt", prompt: "Summarize the current work: goal, relevant changes, Git state, verification completed, remaining risks, and recommended next action." };
+        case "agent": {
+            if (!arg)
+                return { type: "notice", message: "Usage: /agent [profile] <task> — delegates <task> to a subagent with its own tool loop, optionally on a different provider profile." };
+            const maybeProfile = parsed.args[0];
+            const useProfile = config.profiles[maybeProfile] ? maybeProfile : undefined;
+            const task = useProfile ? parsed.args.slice(1).join(" ") : arg;
+            if (!task)
+                return { type: "notice", message: "Usage: /agent [profile] <task>" };
+            return { type: "prompt", prompt: `Use the spawn_agent tool to delegate this task to a subagent${useProfile ? ` on provider profile "${useProfile}"` : ""}, then report its findings: ${task}` };
+        }
         case "theme": {
             config.ui.theme = config.ui.theme === "flame" ? "cool" : config.ui.theme === "cool" ? "contrast" : config.ui.theme === "contrast" ? "mono" : "flame";
             context.persist();
