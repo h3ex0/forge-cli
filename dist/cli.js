@@ -5,7 +5,9 @@ import { configExists, DEFAULT_CONFIG, loadConfig, readMaskedLine, runSetupWizar
 import { createDriver } from "./providers/index.js";
 import { activateLocalModel, inspectLocalModel, listRuntimeSummaries, pullLocalModel } from "./runtime/service.js";
 import { startRuntime, stopOwnedRuntime } from "./runtime/process.js";
-import { listSessions, loadSession } from "./session.js";
+import { deleteSession, listSessionSummaries, loadSession } from "./session.js";
+import { clearMemory, forgetFact, readMemory, rememberFact } from "./memory.js";
+import { listSkills, findSkill } from "./skills.js";
 import { VERSION } from "./version.js";
 import { clearProfileUsage, loadUsageLedger } from "./usage-store.js";
 import { deleteProfileSecret } from "./security/secrets.js";
@@ -83,10 +85,10 @@ function printRuntimeSummaries(summaries, json) {
 function addCompletionCommand(program) {
     program.command("completion <shell>").description("Generate shell completion setup").action((shell) => {
         const scripts = {
-            powershell: "Register-ArgumentCompleter -Native -CommandName forge -ScriptBlock { param($wordToComplete) 'chat','tui','run','model','provider','key','runtime','session','limit','doctor','completion' | Where-Object { $_ -like \"$wordToComplete*\" } | ForEach-Object { [System.Management.Automation.CompletionResult]::new($_,$_, 'ParameterValue', $_) } }",
-            bash: "complete -W 'chat tui run model provider key runtime session limit doctor completion' forge",
-            zsh: "compdef '_arguments \"1:command:(chat tui run model provider key runtime session limit doctor completion)\"' forge",
-            fish: "complete -c forge -f -a 'chat tui run model provider key runtime session limit doctor completion'",
+            powershell: "Register-ArgumentCompleter -Native -CommandName forge -ScriptBlock { param($wordToComplete) 'chat','tui','run','model','provider','key','runtime','session','memory','skill','limit','doctor','completion' | Where-Object { $_ -like \"$wordToComplete*\" } | ForEach-Object { [System.Management.Automation.CompletionResult]::new($_,$_, 'ParameterValue', $_) } }",
+            bash: "complete -W 'chat tui run model provider key runtime session memory skill limit doctor completion' forge",
+            zsh: "compdef '_arguments \"1:command:(chat tui run model provider key runtime session memory skill limit doctor completion)\"' forge",
+            fish: "complete -c forge -f -a 'chat tui run model provider key runtime session memory skill limit doctor completion'",
         };
         const script = scripts[shell];
         if (!script)
@@ -215,7 +217,24 @@ export function createProgram() {
         printOk(`Stopped ${kind}.`);
     });
     const session = program.command("session").description("Manage saved conversations");
-    session.command("list").action(() => listSessions().forEach((name) => console.log(name)));
+    session.command("list").option("--json").description("List sessions newest first, with ids to resume by").action((options) => {
+        const summaries = listSessionSummaries();
+        if (options.json) {
+            console.log(JSON.stringify(summaries));
+            return;
+        }
+        if (!summaries.length) {
+            console.log("No saved sessions yet.");
+            return;
+        }
+        for (const entry of summaries) {
+            console.log(`${entry.id}  ${String(entry.messageCount).padStart(3)} msg  ${entry.updatedAt.slice(0, 16).replace("T", " ")}  ${entry.title}`);
+        }
+    });
+    session.command("delete <id>").description("Delete a saved session").action((id) => {
+        deleteSession(id);
+        printOk(`Deleted ${id}.`);
+    });
     session.command("show <name>").option("--json").action((name, options) => {
         const messages = loadSession(name);
         console.log(options.json ? JSON.stringify(messages) : messages.map((message) => `[${message.role}] ${message.content}`).join("\n"));
@@ -223,6 +242,55 @@ export function createProgram() {
     session.command("export <name> <file>").action((name, file) => {
         fs.writeFileSync(file, JSON.stringify(loadSession(name), null, 2), "utf-8");
         printOk(`Exported ${name} to ${file}.`);
+    });
+    const memory = program.command("memory").description("What Forge remembers about a workspace between sessions");
+    memory.command("list").option("--json").action((options) => {
+        const entries = readMemory(requireConfig().permissions.workspaceRoot);
+        if (options.json) {
+            console.log(JSON.stringify(entries));
+            return;
+        }
+        if (!entries.length) {
+            console.log("Nothing remembered for this workspace yet.");
+            return;
+        }
+        for (const entry of entries)
+            console.log(`${entry.id}  ${entry.text}`);
+    });
+    memory.command("add <text...>").action((parts) => {
+        const entry = rememberFact(requireConfig().permissions.workspaceRoot, parts.join(" "));
+        printOk(entry ? `Remembered (${entry.id}).` : "Already remembered; nothing added.");
+    });
+    memory.command("forget <id>").action((id) => {
+        printOk(forgetFact(requireConfig().permissions.workspaceRoot, id) ? `Forgot ${id}.` : `No remembered fact with id ${id}.`);
+    });
+    memory.command("clear").action(() => {
+        clearMemory(requireConfig().permissions.workspaceRoot);
+        printOk("Workspace memory cleared.");
+    });
+    const skills = program.command("skill").description("Reusable instruction packs Forge can load on demand");
+    skills.command("list").option("--json").action((options) => {
+        const found = listSkills(requireConfig().permissions.workspaceRoot);
+        if (options.json) {
+            console.log(JSON.stringify(found));
+            return;
+        }
+        if (!found.length) {
+            console.log("No skills found. Add markdown files under .forge/skills in the workspace, or skills/ in Forge's config directory.");
+            return;
+        }
+        for (const skill of found)
+            console.log(`${skill.name.padEnd(24)} [${skill.scope}]  ${skill.description}`);
+    });
+    skills.command("show <name>").description("Print a skill's full instructions").action((name) => {
+        const skill = findSkill(requireConfig().permissions.workspaceRoot, name);
+        if (!skill)
+            throw new Error(`No skill named "${name}".`);
+        console.log(`# ${skill.name}
+${skill.description ? `
+${skill.description}
+` : ""}
+${skill.body}`);
     });
     const limit = program.command("limit").description("Show or configure subscription and usage limits");
     limit.command("show").option("--json").action((options) => {

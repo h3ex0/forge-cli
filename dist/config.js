@@ -6,7 +6,7 @@ import { z } from "zod";
 import { colors, printOk, printSystem, printWarn } from "./ui.js";
 import { loadProfileSecret, storeProfileSecret } from "./security/secrets.js";
 import { clearProfileUsage } from "./usage-store.js";
-const CONFIG_DIR = process.env.FORGE_HOME ? path.resolve(process.env.FORGE_HOME) : path.join(os.homedir(), ".forge");
+export const CONFIG_DIR = process.env.FORGE_HOME ? path.resolve(process.env.FORGE_HOME) : path.join(os.homedir(), ".forge");
 export const CONFIG_PATH = path.join(CONFIG_DIR, "config.json");
 export const SESSIONS_DIR = path.join(CONFIG_DIR, "sessions");
 const profileSchema = z.object({

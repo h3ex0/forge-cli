@@ -16,6 +16,35 @@ export function listSessions() {
         .filter((f) => f.endsWith(".json"))
         .map((f) => f.replace(/\.json$/, ""));
 }
+/** Derive a human-recognisable title from the first thing the user asked. */
+export function sessionTitle(messages) {
+    const firstUser = messages.find((message) => message.role === "user");
+    if (!firstUser)
+        return "(empty session)";
+    const line = firstUser.content.split("\n").map((part) => part.trim()).find(Boolean) ?? "";
+    return line.length > 72 ? `${line.slice(0, 71)}…` : line || "(empty session)";
+}
+/** Sessions newest first, with enough detail to pick one out of a list. */
+export function listSessionSummaries() {
+    return listSessions()
+        .map((id) => {
+        const file = path.join(SESSIONS_DIR, `${id}.json`);
+        try {
+            const messages = JSON.parse(fs.readFileSync(file, "utf-8"));
+            return {
+                id,
+                title: sessionTitle(messages),
+                updatedAt: fs.statSync(file).mtime.toISOString(),
+                messageCount: messages.filter((message) => message.role !== "system").length,
+            };
+        }
+        catch {
+            return undefined; // unreadable or hand-edited file — skip rather than fail the list
+        }
+    })
+        .filter((entry) => entry !== undefined)
+        .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+}
 export function saveSession(name, messages) {
     if (!fs.existsSync(SESSIONS_DIR))
         fs.mkdirSync(SESSIONS_DIR, { recursive: true });
@@ -25,6 +54,20 @@ export function saveSession(name, messages) {
 export function loadSession(name) {
     const file = path.join(SESSIONS_DIR, `${validateSessionName(name)}.json`);
     return JSON.parse(fs.readFileSync(file, "utf-8"));
+}
+export function deleteSession(name) {
+    fs.rmSync(path.join(SESSIONS_DIR, `${validateSessionName(name)}.json`), { force: true });
+}
+/**
+ * Identifier for a brand new session. Time-ordered so the id itself sorts
+ * chronologically, with a short random suffix so two sessions started in the
+ * same second can't collide.
+ */
+export function newSessionId() {
+    const now = new Date();
+    const pad = (value) => String(value).padStart(2, "0");
+    const stamp = `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}-${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`;
+    return `s${stamp}-${Math.random().toString(36).slice(2, 6)}`;
 }
 export function defaultSessionName() {
     const now = new Date();

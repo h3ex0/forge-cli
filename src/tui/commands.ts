@@ -1,7 +1,9 @@
 import fs from "node:fs";
 import type { ForgeConfig, PermissionMode } from "../config.js";
 import type { ChatMessage } from "../providers/types.js";
-import { loadSession, saveSession, defaultSessionName, serializeConversation } from "../session.js";
+import { listSessionSummaries, loadSession, saveSession, defaultSessionName, serializeConversation } from "../session.js";
+import { clearMemory, forgetFact, readMemory, rememberFact } from "../memory.js";
+import { findSkill, listSkills } from "../skills.js";
 import { parseSlashCommand } from "../commands/parser.js";
 import { slashCommandNames } from "../commands/registry.js";
 import { activateLocalModel } from "../runtime/service.js";
@@ -146,10 +148,41 @@ export function executeTuiCommand(input: string, context: TuiCommandContext): Tu
       try { return { type: "load", messages: loadSession(arg), name: arg }; }
       catch { return { type: "notice", message: `Could not load session ${arg}.` }; }
     }
-    case "sessions": return { type: "overlay", overlay: "sessions" };
     case "resume": {
-      try { return { type: "load", messages: loadSession("autosave"), name: "autosave" }; }
-      catch { return { type: "notice", message: "No automatic recovery session is available." }; }
+      // No argument resumes the most recently updated session; with one, that
+      // exact session id.
+      const target = arg || listSessionSummaries()[0]?.id;
+      if (!target) return { type: "notice", message: "No previous session to resume." };
+      try { return { type: "load", messages: loadSession(target), name: target }; }
+      catch { return { type: "notice", message: `Could not resume ${target}.` }; }
+    }
+    case "sessions": return { type: "overlay", overlay: "sessions" };
+    case "memory": {
+      const sub = parsed.args[0] ?? "list";
+      if (sub === "clear") { clearMemory(config.permissions.workspaceRoot); return { type: "notice", message: "Workspace memory cleared." }; }
+      if (sub === "forget") {
+        const id = parsed.args[1];
+        if (!id) return { type: "notice", message: "Usage: /memory forget <id>" };
+        return { type: "notice", message: forgetFact(config.permissions.workspaceRoot, id) ? `Forgot ${id}.` : `No remembered fact with id ${id}.` };
+      }
+      if (sub === "add") {
+        const value = parsed.args.slice(1).join(" ");
+        if (!value) return { type: "notice", message: "Usage: /memory add <fact>" };
+        const entry = rememberFact(config.permissions.workspaceRoot, value);
+        return { type: "notice", message: entry ? `Remembered (${entry.id}).` : "Already remembered." };
+      }
+      const entries = readMemory(config.permissions.workspaceRoot);
+      return { type: "notice", message: entries.length ? entries.map((entry) => `${entry.id}: ${entry.text}`).join(" · ") : "Nothing remembered for this workspace yet." };
+    }
+    case "skills": {
+      const name = arg;
+      if (!name) {
+        const skills = listSkills(config.permissions.workspaceRoot);
+        return { type: "notice", message: skills.length ? skills.map((skill) => `${skill.name} [${skill.scope}]`).join(" · ") : "No skills found. Add markdown files under .forge/skills." };
+      }
+      const skill = findSkill(config.permissions.workspaceRoot, name);
+      if (!skill) return { type: "notice", message: `No skill named "${name}".` };
+      return { type: "prompt", prompt: `Use the ${skill.name} skill for this task. Call skill_read with name "${skill.name}" to load its full instructions, then follow them.` };
     }
     case "branch": {
       const name = arg || defaultSessionName();

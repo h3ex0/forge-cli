@@ -8,6 +8,8 @@ import { createTwoFilesPatch } from "diff";
 import { validatePublicUrl } from "../security/network.js";
 import { resolveWorkspacePath } from "../security/workspace.js";
 import { recordUndo, snapshotPath } from "../undo.js";
+import { forgetFact, readMemory, rememberFact } from "../memory.js";
+import { findSkill, listSkills } from "../skills.js";
 /** Build a unified diff for an approval preview; returns undefined when there is nothing to show. */
 function unifiedDiff(relativePath, before, after) {
     if (before === after)
@@ -392,6 +394,55 @@ export function createTools(context) {
             description: "Read the working plan's current todo list.",
             parameters: { type: "object", properties: {}, additionalProperties: false },
         }, "read", async () => renderTodos(todoStore.get(root) ?? [])),
+        tool({
+            name: "memory_write",
+            description: "Remember a durable fact about this workspace for future sessions: conventions, architecture decisions, the user's stated preferences, where things live. Do not store secrets, or anything already obvious from the code or git history.",
+            parameters: { type: "object", properties: { text: { type: "string" } }, required: ["text"], additionalProperties: false },
+        }, "write", async (args) => {
+            const entry = rememberFact(root, text(args, "text"));
+            return entry ? `Remembered (${entry.id}): ${entry.text}` : "Already remembered; nothing added.";
+        }),
+        tool({
+            name: "memory_read",
+            description: "List everything remembered about this workspace from earlier sessions.",
+            parameters: { type: "object", properties: {}, additionalProperties: false },
+        }, "read", async () => {
+            const entries = readMemory(root);
+            return entries.length
+                ? clip(entries.map((entry) => `${entry.id}  ${entry.text}`).join("\n"))
+                : "Nothing remembered for this workspace yet.";
+        }),
+        tool({
+            name: "memory_forget",
+            description: "Remove one remembered fact by its id, when it has become wrong or obsolete.",
+            parameters: { type: "object", properties: { id: { type: "string" } }, required: ["id"], additionalProperties: false },
+        }, "write", async (args) => {
+            const id = text(args, "id");
+            return forgetFact(root, id) ? `Forgot ${id}.` : `No remembered fact with id ${id}.`;
+        }),
+        tool({
+            name: "skill_list",
+            description: "List the skills available in this workspace — reusable instruction packs for particular kinds of work.",
+            parameters: { type: "object", properties: {}, additionalProperties: false },
+        }, "read", async () => {
+            const skills = listSkills(root);
+            return skills.length
+                ? clip(skills.map((skill) => `${skill.name} [${skill.scope}] — ${skill.description || "(no description)"}`).join("\n"))
+                : "No skills found. Add markdown files under .forge/skills in the workspace, or the skills directory in Forge's config folder.";
+        }),
+        tool({
+            name: "skill_read",
+            description: "Load a skill's full instructions by name, then follow them for the task at hand. Read the relevant skill before starting work it covers.",
+            parameters: { type: "object", properties: { name: { type: "string" } }, required: ["name"], additionalProperties: false },
+        }, "read", async (args) => {
+            const wanted = text(args, "name");
+            const skill = findSkill(root, wanted);
+            if (!skill) {
+                const available = listSkills(root).map((item) => item.name).join(", ");
+                throw new Error(`No skill named "${wanted}".${available ? ` Available: ${available}` : ""}`);
+            }
+            return clip(`# ${skill.name}\n${skill.description ? `\n${skill.description}\n` : ""}\n${skill.body}`);
+        }),
         tool({
             name: "bash_exec",
             description: "High-risk compatibility escape hatch: execute a shell command inside the workspace.",

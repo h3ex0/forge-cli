@@ -13,7 +13,9 @@ import { createDriver } from "../providers/index.js";
 import { applyUndo, popUndo } from "../undo.js";
 import { inspectLocalModel, listRuntimeSummaries, pullLocalModel } from "../runtime/service.js";
 import { startRuntime, stopOwnedRuntime } from "../runtime/process.js";
-import { listSessions, loadSession, saveSession } from "../session.js";
+import { listSessionSummaries, loadSession, newSessionId, saveSession } from "../session.js";
+import { memoryPromptSection } from "../memory.js";
+import { skillsPromptSection } from "../skills.js";
 import { detectProject, loadProjectInstructions } from "../project.js";
 import { VERSION } from "../version.js";
 import { resolveWorkspacePath } from "../security/workspace.js";
@@ -42,9 +44,16 @@ export function expandPastedBlocks(value, blocks) {
     return result;
 }
 function systemMessages(config) {
-    const instructions = loadProjectInstructions(config.permissions.workspaceRoot)
+    const root = config.permissions.workspaceRoot;
+    const instructions = loadProjectInstructions(root)
         .map((item) => `\n\n[${item.file}]\n${item.content}`).join("");
-    return [{ role: "system", content: `You are Forge, a concise AI coding assistant. Work only inside the approved workspace. Use tools when useful.${instructions}` }];
+    // Memory and the skill catalogue are rebuilt here rather than cached, so
+    // /new and a workspace switch both pick up the current state.
+    return [{
+            role: "system",
+            content: `You are Forge, a concise AI coding assistant. Work only inside the approved workspace. Use tools when useful.`
+                + `${instructions}${memoryPromptSection(root)}${skillsPromptSection(root)}`,
+        }];
 }
 function statusSymbol(status) {
     return status === "completed" ? "✓" : status === "failed" ? "×" : status === "denied" ? "!" : status === "running" ? "●" : "○";
@@ -211,12 +220,15 @@ export function ForgeTui({ config }) {
     // every render to do it.
     const [hasResumableSession] = React.useState(() => {
         try {
-            return listSessions().includes("autosave");
+            return listSessionSummaries().length > 0;
         }
         catch {
             return false;
         }
     });
+    // Every run gets an id up front, so its autosaves land in their own file
+    // and stay resumable instead of all runs sharing one "autosave" slot.
+    const sessionIdRef = React.useRef(newSessionId());
     const contextFilesRef = React.useRef(new Map());
     const pastedBlocksRef = React.useRef(new Map());
     const pasteCounterRef = React.useRef(0);
@@ -314,7 +326,7 @@ export function ForgeTui({ config }) {
             else if (event.type === "message.completed") {
                 clearStreamBuffer();
                 setStreamText("");
-                saveSession("autosave", messagesRef.current);
+                saveSession(sessionIdRef.current, messagesRef.current);
                 setRevision((value) => value + 1);
             }
             else if (event.type === "tool.requested")
@@ -382,7 +394,13 @@ export function ForgeTui({ config }) {
                 .then((files) => setOverlayItems(files.slice(0, 500).map((file) => ({ id: file, label: file, detail: contextFilesRef.current.has(file) ? "pinned" : undefined })))).catch(() => setOverlayItems([]));
         }
         else if (overlay === "sessions") {
-            setOverlayItems(listSessions().map((name) => ({ id: name, label: name })));
+            // Newest first, with the first thing asked as the label so a session is
+            // recognisable, and the id kept as the detail for /load.
+            setOverlayItems(listSessionSummaries().map((entry) => ({
+                id: entry.id,
+                label: entry.title,
+                detail: `${entry.messageCount} msg · ${entry.updatedAt.slice(0, 16).replace("T", " ")} · ${entry.id}`,
+            })));
         }
     }, [overlay, config]);
     const filteredOverlayItems = React.useMemo(() => {
@@ -449,7 +467,10 @@ export function ForgeTui({ config }) {
         else if (overlay === "sessions") {
             try {
                 messagesRef.current.splice(0, messagesRef.current.length, ...loadSession(item.id));
-                setNotice(`Loaded ${item.id}`);
+                // Adopt the loaded session's id so continuing the conversation saves
+                // back into it rather than forking into the id this run started with.
+                sessionIdRef.current = item.id;
+                setNotice(`Resumed ${item.id}`);
                 setOverlay(null);
                 setRevision((value) => value + 1);
             }
@@ -548,7 +569,8 @@ export function ForgeTui({ config }) {
         }
         if (command.type === "load") {
             messagesRef.current.splice(0, messagesRef.current.length, ...command.messages);
-            setNotice(`Loaded ${command.name}`);
+            sessionIdRef.current = command.name;
+            setNotice(`Resumed ${command.name}`);
             setRevision((revision) => revision + 1);
             return;
         }

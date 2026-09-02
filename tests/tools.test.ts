@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { createTools } from "../src/tools/index.js";
 import { applyUndo, clearUndoJournals, popUndo, undoStackSize } from "../src/undo.js";
 
@@ -154,6 +154,33 @@ describe("workspace-scoped tools", () => {
     expect(fs.existsSync(path.join(root, "b.txt"))).toBe(false);
     applyUndo(root, popUndo(root)!);
     expect(fs.readFileSync(path.join(root, "b.txt"), "utf-8")).toBe("one\ntwo\n");
+  });
+
+  it("exposes memory and skills as tools", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "forge-tools-"));
+    created.push(root);
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "forge-home-"));
+    created.push(home);
+    process.env.FORGE_HOME = home;
+    try {
+      vi.resetModules();
+      const { createTools: freshCreateTools } = await import("../src/tools/index.js");
+      const tools = freshCreateTools({ workspaceRoot: root });
+      const byName = (name: string) => tools.find((item) => item.def.name === name)!;
+
+      await expect(byName("memory_read").execute({})).resolves.toContain("Nothing remembered");
+      await expect(byName("memory_write").execute({ text: "Uses vitest" })).resolves.toContain("Remembered");
+      await expect(byName("memory_read").execute({})).resolves.toContain("Uses vitest");
+
+      fs.mkdirSync(path.join(root, ".forge", "skills"), { recursive: true });
+      fs.writeFileSync(path.join(root, ".forge", "skills", "deploy.md"), "---\nname: deploy\ndescription: How to ship\n---\nRun verify, then tag.", "utf-8");
+      await expect(byName("skill_list").execute({})).resolves.toContain("deploy");
+      await expect(byName("skill_read").execute({ name: "deploy" })).resolves.toContain("Run verify, then tag.");
+      await expect(byName("skill_read").execute({ name: "missing" })).rejects.toThrow(/No skill named/);
+    } finally {
+      delete process.env.FORGE_HOME;
+      vi.resetModules();
+    }
   });
 
   it("tracks a todo list across reads and writes", async () => {

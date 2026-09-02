@@ -40,7 +40,7 @@ export interface ForgeConfig {
   runtimes: Record<RuntimeKind, { baseURL: string; executable?: string; modelRoots?: string[] }>;
 }
 
-const CONFIG_DIR = process.env.FORGE_HOME ? path.resolve(process.env.FORGE_HOME) : path.join(os.homedir(), ".forge");
+export const CONFIG_DIR = process.env.FORGE_HOME ? path.resolve(process.env.FORGE_HOME) : path.join(os.homedir(), ".forge");
 export const CONFIG_PATH = path.join(CONFIG_DIR, "config.json");
 export const SESSIONS_DIR = path.join(CONFIG_DIR, "sessions");
 

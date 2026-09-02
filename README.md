@@ -108,6 +108,9 @@ forge provider list
 forge provider add myapi https://api.example.com/v1 gpt-4o-mini --format openai
 forge provider use myapi
 forge key set myapi
+forge session list
+forge memory add "Deploys go out on Thursdays"
+forge skill list
 forge doctor --json
 forge limit show
 forge completion powershell
@@ -145,6 +148,23 @@ When an approval prompt is showing, use `←`/`→` or `Tab` to move between "Al
 Native text selection is the default: drag normally to select and copy terminal text. Press `Ctrl+T` or run `/mouse on` when you want clickable footer actions, overlay rows, wheel scrolling, and approval buttons. Press `Ctrl+T` again to return to selection mode. Many terminals also support `Shift+drag` for selection while mouse capture is active.
 
 The conversation view truncates long messages to keep the frame bounded. Press `Ctrl+Y` for the reader — a full-screen, borderless view of the untruncated conversation that you can scroll and select cleanly. `Ctrl+E` opens the complete session status or latest error the same way. Mouse capture switches off automatically there so you can drag-select; `Esc` returns to the workspace.
+
+## Sessions, memory, and skills
+
+Every run gets a session id (`s<timestamp>-<suffix>`) and autosaves into it, so nothing is trapped in a single shared slot. `forge session list` shows them newest first, titled by the first thing you asked; `/resume` picks up the most recent one, `/resume <id>` a specific one, and `^S` opens the picker. Loading a session adopts its id, so continuing the conversation saves back into it rather than forking.
+
+**Memory** is what Forge should still know next time. It's per workspace, stored under Forge's config directory, and injected into the system prompt at the start of each session. The agent records facts itself with the `memory_write` tool; you can manage them with `/memory` in the TUI or `forge memory add|list|forget|clear`. Use it for conventions, architecture decisions, and your stated preferences — not for secrets, and not for anything already obvious from the code or git history.
+
+**Skills** are reusable instruction packs: markdown files, optionally with `name:`/`description:` frontmatter. Forge looks in `.forge/skills` in the workspace (checked in, shared with the team) and in `skills/` under its config directory (personal, available everywhere); a workspace skill shadows a user skill of the same name. Their names and descriptions are listed in the system prompt, and the agent calls `skill_read` to load the full instructions when a task calls for one. `/skills` lists them or applies one to the current task; `forge skill list|show` works from the shell.
+
+```markdown
+---
+name: migrations
+description: Writing safe schema migrations
+---
+
+Always ship the additive change first, backfill, then remove the old column.
+```
 
 Commands, model names, files, and sessions are searchable inside their overlays. Prompts typed while Forge is working are queued for the next turn. The TUI autosaves conversations as `autosave` and records `recovery-latest` before approved write/process operations.
 
