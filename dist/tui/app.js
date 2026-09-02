@@ -173,9 +173,7 @@ export function ForgeTui({ config }) {
     const operationAbortRef = React.useRef(null);
     const messagesRef = React.useRef(systemMessages(config));
     const sessionRef = React.useRef(null);
-    const activityPaneRef = React.useRef(null);
     const conversationPaneRef = React.useRef(null);
-    const contextPaneRef = React.useRef(null);
     const composerRef = React.useRef(null);
     const approvalAllowRef = React.useRef(null);
     const approvalDenyRef = React.useRef(null);
@@ -186,10 +184,8 @@ export function ForgeTui({ config }) {
     const modelsButtonRef = React.useRef(null);
     const sessionsButtonRef = React.useRef(null);
     const helpButtonRef = React.useRef(null);
-    const mouseButtonRef = React.useRef(null);
     const modeButtonRef = React.useRef(null);
     const readerButtonRef = React.useRef(null);
-    const statusButtonRef = React.useRef(null);
     const theme = getTheme(config.ui.theme);
     React.useEffect(() => {
         if (!config.ui.mouse || !stdout.isTTY)
@@ -856,25 +852,15 @@ export function ForgeTui({ config }) {
                 return;
             }
             if (mouse.action === "wheel") {
-                if (containsPoint(metrics(activityPaneRef), mouse.x, mouse.y)) {
-                    setFocus("activity");
-                    setSelectedActivity((value) => Math.max(0, Math.min(activities.length - 1, value + (mouse.button === "wheel-down" ? 1 : -1))));
-                }
-                else {
-                    setFocus("conversation");
-                    setScrollOffset((value) => Math.max(0, value + (mouse.button === "wheel-up" ? 3 : -3)));
-                }
+                setFocus("conversation");
+                setScrollOffset((value) => Math.max(0, value + (mouse.button === "wheel-up" ? 3 : -3)));
                 return;
             }
             if (mouse.action === "press" && mouse.button === "right") {
-                if (containsPoint(metrics(activityPaneRef), mouse.x, mouse.y))
-                    openReader("activity");
-                else if (containsPoint(metrics(contextPaneRef), mouse.x, mouse.y))
-                    openReader("context");
-                else if (containsPoint(metrics(conversationPaneRef), mouse.x, mouse.y))
-                    openReader("conversation");
-                else if (containsPoint(metrics(composerRef), mouse.x, mouse.y))
+                if (containsPoint(metrics(composerRef), mouse.x, mouse.y))
                     openReader("composer");
+                else
+                    openReader("conversation");
                 return;
             }
             if (mouse.action !== "press" || mouse.button !== "left")
@@ -899,13 +885,6 @@ export function ForgeTui({ config }) {
                 setOverlay("help");
                 return;
             }
-            if (containsPoint(metrics(mouseButtonRef), mouse.x, mouse.y)) {
-                config.ui.mouse = false;
-                saveConfig(config);
-                setNotice("Mouse capture off — drag to select text; Ctrl+T turns it back on.");
-                setRevision((value) => value + 1);
-                return;
-            }
             if (containsPoint(metrics(modeButtonRef), mouse.x, mouse.y)) {
                 cyclePermissionMode();
                 return;
@@ -914,25 +893,11 @@ export function ForgeTui({ config }) {
                 openReader();
                 return;
             }
-            if (containsPoint(metrics(statusButtonRef), mouse.x, mouse.y)) {
-                openReader("context");
-                return;
-            }
             for (const [index, node] of activityItemRefs.current) {
                 if (containsPoint(measureElement(node), mouse.x, mouse.y)) {
-                    setFocus("activity");
                     setSelectedActivity(index);
                     return;
                 }
-            }
-            if (containsPoint(metrics(activityPaneRef), mouse.x, mouse.y)) {
-                setFocus("activity");
-                return;
-            }
-            if (containsPoint(metrics(contextPaneRef), mouse.x, mouse.y)) {
-                setFocus("context");
-                setOverlay("context");
-                return;
             }
             if (containsPoint(metrics(conversationPaneRef), mouse.x, mouse.y)) {
                 setFocus("conversation");
@@ -1009,8 +974,9 @@ export function ForgeTui({ config }) {
             return;
         }
         if (key.tab) {
-            const order = wide ? ["activity", "conversation", "context", "composer"] : medium ? ["conversation", "context", "composer"] : ["conversation", "composer"];
-            setFocus((current) => order[(order.indexOf(current) + 1) % order.length]);
+            // One pane now, so Tab just swaps between typing and scrolling the
+            // conversation with the arrow keys.
+            setFocus((current) => (current === "composer" ? "conversation" : "composer"));
             return;
         }
         if (overlay) {
@@ -1120,18 +1086,11 @@ export function ForgeTui({ config }) {
     const messageMaxLines = Math.max(15, dimensions.rows - 10);
     const end = Math.max(0, displayMessages.length - scrollOffset);
     const visibleMessages = displayMessages.slice(Math.max(0, end - maxMessages), end);
-    const wide = dimensions.columns >= 120;
-    const medium = dimensions.columns >= 90;
-    // Estimated inner width of the conversation pane, used to pre-wrap long
-    // messages ourselves so a truncation cap can be enforced on rendered rows
-    // rather than raw "\n"-delimited lines (a single very long line with no
-    // newlines would otherwise ignore any line-count-based cap entirely).
-    // Activity/context widths below are each pane's own declared `width`
-    // (which already includes that pane's border+padding, confirmed against
-    // Ink's actual layout output — not just their inner content width).
-    // Conversation's own border(2)+paddingX(2) is subtracted separately since
-    // it isn't a fixed-width pane; its share of the row comes from flexGrow.
-    const conversationPaneWidth = Math.max(20, dimensions.columns - (wide ? 25 : 0) - (medium ? (wide ? 29 : 25) : 0) - 4);
+    // Single full-width pane: only the root's paddingX(1 each side) is taken
+    // out. Used to pre-wrap messages ourselves so the row cap is enforced on
+    // rendered rows rather than raw "\n"-delimited lines (one very long line
+    // with no newlines would otherwise ignore a line-count cap entirely).
+    const conversationPaneWidth = Math.max(20, dimensions.columns - 2);
     const suggestions = tuiCommandSuggestions(input);
     const estimatedCostUsd = estimateCost(profile, usage, pricing);
     const contextTokens = estimateMessageTokens(messagesRef.current);
@@ -1187,8 +1146,8 @@ export function ForgeTui({ config }) {
     // the wrong offset and old frames stay on screen underneath. Clipping here
     // means no component can ever push the frame past the terminal height,
     // whatever it renders.
-    return _jsxs(Box, { flexDirection: "column", height: dimensions.rows, width: dimensions.columns, overflow: "hidden", children: [_jsxs(Box, { flexShrink: 0, borderStyle: "round", borderColor: theme.focusBorder, paddingX: 1, children: [_jsx(Box, { flexShrink: 0, children: _jsx(Text, { bold: true, color: theme.accent, children: "\u25C6 FORGE" }) }), _jsx(Box, { flexGrow: 1, flexShrink: 1, minWidth: 0, justifyContent: "flex-end", children: _jsxs(Text, { wrap: "truncate-end", children: [" ", sanitizeTerminalText(path.basename(config.permissions.workspaceRoot)), " \u00B7 ", sanitizeTerminalText(config.activeProfile), "/", sanitizeTerminalText(profile.model), " \u00B7 ", profile.kind === "local" ? "● local" : "◉ cloud", " \u00B7 ", config.permissions.mode, config.routing.offline ? " · offline" : ""] }) })] }), _jsxs(Box, { flexGrow: 1, flexShrink: 1, flexBasis: 0, overflow: "hidden", children: [wide && _jsxs(Box, { ref: activityPaneRef, width: 25, flexShrink: 0, flexDirection: "column", overflow: "hidden", borderStyle: "single", borderColor: focus === "activity" ? theme.focusBorder : theme.border, paddingX: 1, children: [_jsx(Text, { bold: true, color: theme.accent, children: "ACTIVITY" }), activities.slice(0, Math.max(3, dimensions.rows - 10)).map((item, index) => _jsx(Box, { ref: (node) => { if (node)
-                                    activityItemRefs.current.set(index, node);
-                                else
-                                    activityItemRefs.current.delete(index); }, children: _jsxs(Text, { inverse: focus === "activity" && index === selectedActivity, color: item.status === "failed" ? theme.danger : item.status === "completed" ? theme.success : theme.warning, wrap: "truncate-end", children: [statusSymbol(item.status), " ", sanitizeTerminalText(item.name), " ", item.durationMs != null ? `${item.durationMs}ms` : ""] }) }, item.id)), !activities.length && _jsx(Text, { color: theme.muted, children: "Tool calls appear here." })] }), _jsxs(Box, { ref: conversationPaneRef, flexGrow: 1, flexShrink: 1, flexBasis: 0, flexDirection: "column", overflow: "hidden", borderStyle: "single", borderColor: focus === "conversation" ? theme.focusBorder : theme.border, paddingX: 1, children: [visibleMessages.map((message, index) => _jsx(MessageBlock, { message: message, theme: theme, maxLines: messageMaxLines, paneWidth: conversationPaneWidth }, `${message.role}-${index}`)), !visibleMessages.length && _jsx(Box, { flexGrow: 1, alignItems: "center", justifyContent: "center", children: _jsx(Text, { color: theme.muted, children: "Ask about this workspace, press Ctrl+K for commands, or Ctrl+M for models." }) })] }), medium && _jsxs(Box, { ref: contextPaneRef, width: wide ? 29 : 25, flexShrink: 0, flexDirection: "column", overflow: "hidden", borderStyle: "single", borderColor: focus === "context" ? theme.focusBorder : theme.border, paddingX: 1, children: [_jsx(Text, { bold: true, color: theme.accent, children: "CONTEXT" }), _jsxs(Text, { wrap: "truncate-end", children: ["Workspace: ", sanitizeTerminalText(path.basename(config.permissions.workspaceRoot))] }), _jsxs(Text, { children: ["Instructions: ", loadProjectInstructions(config.permissions.workspaceRoot).length] }), _jsxs(Text, { children: ["Pinned files: ", contextFilesRef.current.size] }), _jsxs(Text, { children: ["Messages: ", allMessages.length] }), _jsxs(Text, { children: ["Context: ~", estimateMessageTokens(messagesRef.current).toLocaleString("en-US"), " tokens"] }), _jsx(Text, { color: theme.muted, children: "Ctrl+P add files" }), _jsxs(Box, { marginTop: 1, flexDirection: "column", children: [_jsx(Text, { bold: true, color: theme.accent, children: "SESSION" }), _jsx(Text, { children: busy ? "● Working" : "○ Ready" }), wrapReaderText(sanitizeTerminalText(notice), (wide ? 29 : 25) - 4).slice(0, 4).map((row, index) => (_jsx(Text, { color: theme.muted, wrap: "truncate-end", children: row || " " }, index)))] })] })] }), _jsxs(Box, { ref: composerRef, flexDirection: "column", flexShrink: 0, overflow: "hidden", borderStyle: "round", borderColor: busy ? theme.warning : focus === "composer" ? theme.focusBorder : theme.border, paddingX: 1, minHeight: 3, children: [visibleComposerRows.map((row, index) => (_jsx(Text, { color: busy ? theme.warning : theme.text, wrap: "truncate-end", children: row || " " }, index))), hiddenComposerRows > 0 && _jsxs(Text, { color: theme.muted, wrap: "truncate-end", children: ["\u2026", hiddenComposerRows, " more line(s) in the composer"] })] }), suggestions.length > 0 && !overlay && _jsxs(Text, { color: theme.muted, children: [" ", suggestions.join("  ")] }), _jsx(Box, { paddingX: 1, overflow: "hidden", children: _jsx(Text, { color: limitExceeded ? theme.danger : theme.muted, bold: limitExceeded, wrap: "truncate-end", children: sanitizeTerminalText(usageLine) }) }), queuedPrompt && _jsxs(Text, { color: theme.warning, wrap: "truncate-end", children: [" Queued: ", sanitizeTerminalText(queuedPrompt)] }), _jsxs(Box, { paddingX: 1, gap: 1, overflow: "hidden", children: [_jsx(Box, { ref: commandButtonRef, children: _jsx(Text, { color: theme.muted, children: "[Cmd ^K]" }) }), _jsx(Box, { ref: filesButtonRef, children: _jsx(Text, { color: theme.muted, children: "[Files ^P]" }) }), _jsx(Box, { ref: modelsButtonRef, children: _jsx(Text, { color: theme.muted, children: "[Models ^M]" }) }), _jsx(Box, { ref: sessionsButtonRef, children: _jsx(Text, { color: theme.muted, children: "[Sessions ^S]" }) }), _jsx(Box, { ref: helpButtonRef, children: _jsx(Text, { color: theme.muted, children: "[Help ?]" }) }), _jsx(Box, { ref: readerButtonRef, children: _jsx(Text, { color: theme.muted, children: "[Reader ^Y]" }) }), _jsx(Box, { ref: statusButtonRef, children: _jsx(Text, { color: notice.startsWith("Error:") ? theme.danger : theme.muted, children: "[Status ^E]" }) }), _jsx(Box, { ref: mouseButtonRef, children: _jsxs(Text, { color: config.ui.mouse ? theme.warning : theme.muted, children: ["[Mouse ", config.ui.mouse ? "on" : "off", " ^T]"] }) }), _jsx(Box, { ref: modeButtonRef, children: _jsx(Text, { color: config.permissions.mode === "autonomous" ? theme.warning : theme.muted, children: "[Mode ^A]" }) }), _jsx(Text, { color: theme.muted, children: " Tab panes" })] })] });
+    return _jsxs(Box, { flexDirection: "column", height: dimensions.rows, width: dimensions.columns, overflow: "hidden", paddingX: 1, children: [_jsxs(Box, { flexShrink: 0, children: [_jsx(Box, { flexShrink: 0, children: _jsx(Text, { bold: true, color: theme.accent, children: "\u25C6 FORGE" }) }), _jsx(Box, { flexGrow: 1, flexShrink: 1, minWidth: 0, justifyContent: "flex-end", children: _jsxs(Text, { wrap: "truncate-end", color: theme.muted, children: [" ", sanitizeTerminalText(path.basename(config.permissions.workspaceRoot)), " \u00B7 ", sanitizeTerminalText(config.activeProfile), "/", sanitizeTerminalText(profile.model), " \u00B7 ", profile.kind === "local" ? "local" : "cloud", " \u00B7 ", config.permissions.mode, config.routing.offline ? " · offline" : ""] }) })] }), _jsxs(Box, { ref: conversationPaneRef, flexGrow: 1, flexShrink: 1, flexBasis: 0, flexDirection: "column", overflow: "hidden", marginTop: 1, children: [visibleMessages.map((message, index) => _jsx(MessageBlock, { message: message, theme: theme, maxLines: messageMaxLines, paneWidth: conversationPaneWidth }, `${message.role}-${index}`)), !visibleMessages.length && _jsx(Box, { flexGrow: 1, alignItems: "center", justifyContent: "center", children: _jsx(Text, { color: theme.muted, children: "Ask about this workspace \u00B7 ^K commands \u00B7 ^M models" }) })] }), activities.length > 0 && _jsx(Box, { flexShrink: 0, flexDirection: "column", overflow: "hidden", children: activities.slice(0, 3).map((item, index) => _jsx(Box, { ref: (node) => { if (node)
+                        activityItemRefs.current.set(index, node);
+                    else
+                        activityItemRefs.current.delete(index); }, children: _jsxs(Text, { color: item.status === "failed" ? theme.danger : item.status === "completed" ? theme.success : theme.warning, wrap: "truncate-end", children: [statusSymbol(item.status), " ", sanitizeTerminalText(item.name), item.durationMs != null ? ` ${item.durationMs}ms` : ""] }) }, item.id)) }), _jsxs(Box, { ref: composerRef, flexDirection: "column", flexShrink: 0, overflow: "hidden", marginTop: 1, children: [visibleComposerRows.map((row, index) => (_jsx(Text, { color: busy ? theme.warning : theme.text, wrap: "truncate-end", children: row || " " }, index))), hiddenComposerRows > 0 && _jsxs(Text, { color: theme.muted, wrap: "truncate-end", children: ["\u2026", hiddenComposerRows, " more line(s)"] })] }), suggestions.length > 0 && _jsx(Text, { color: theme.muted, wrap: "truncate-end", children: suggestions.join("  ") }), queuedPrompt && _jsxs(Text, { color: theme.warning, wrap: "truncate-end", children: ["queued: ", sanitizeTerminalText(queuedPrompt)] }), _jsxs(Box, { flexShrink: 0, overflow: "hidden", marginTop: 1, children: [_jsx(Box, { flexShrink: 0, children: _jsx(Text, { color: busy ? theme.warning : theme.success, children: busy ? "● working" : "○ ready" }) }), _jsx(Box, { flexGrow: 1, flexShrink: 1, minWidth: 0, children: _jsx(Text, { color: notice.startsWith("Error:") ? theme.danger : theme.muted, wrap: "truncate-end", children: notice === "Ready" ? "" : ` ${sanitizeTerminalText(notice)}` }) })] }), _jsx(Box, { flexShrink: 0, overflow: "hidden", children: _jsx(Text, { color: limitExceeded ? theme.danger : theme.muted, bold: limitExceeded, wrap: "truncate-end", children: sanitizeTerminalText(usageLine) }) }), _jsxs(Box, { flexShrink: 0, gap: 2, overflow: "hidden", children: [_jsx(Box, { ref: commandButtonRef, children: _jsx(Text, { color: theme.muted, children: "^K commands" }) }), _jsx(Box, { ref: filesButtonRef, children: _jsx(Text, { color: theme.muted, children: "^P files" }) }), _jsx(Box, { ref: modelsButtonRef, children: _jsx(Text, { color: theme.muted, children: "^M models" }) }), _jsx(Box, { ref: sessionsButtonRef, children: _jsx(Text, { color: theme.muted, children: "^S sessions" }) }), _jsx(Box, { ref: readerButtonRef, children: _jsx(Text, { color: theme.muted, children: "^Y reader" }) }), _jsx(Box, { ref: modeButtonRef, children: _jsx(Text, { color: config.permissions.mode === "autonomous" ? theme.warning : theme.muted, children: "^A mode" }) }), _jsx(Box, { ref: helpButtonRef, children: _jsx(Text, { color: theme.muted, children: "? help" }) })] })] });
 }

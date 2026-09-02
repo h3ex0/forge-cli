@@ -119,7 +119,9 @@ The full-screen workspace needs a real terminal at least 72x18. When input or ou
 
 ## Full-screen workspace
 
-The full-screen workspace shows conversation, tool activity, project context, the active model, and session state without taking focus away from the composer. Command/model/file/session lists, the approval prompt, and provider/key entry each take over the whole screen while active (like the reader pane) and return to the chat view on close, rather than floating over live content.
+The workspace is a single, borderless pane: the conversation fills the screen, with a header line, the composer, recent tool activity, and a status line around it. There are no side panels or box borders — everything that used to live in a column now appears inline or in a full-screen view you open on demand. Command/model/file/session lists, the approval prompt, and provider/key entry each take over the whole screen while active and return to the chat view on close, rather than floating over live content.
+
+Every surface is height-bounded and the root frame is clipped to the terminal, so no amount of output — a huge paste, a flood of keystrokes, a long streamed reply — can push the frame past the screen. That matters because once a frame is taller than the terminal, the terminal scrolls and the redraw desyncs permanently, leaving old and new frames superimposed.
 
 | Shortcut | Action |
 | --- | --- |
@@ -129,9 +131,9 @@ The full-screen workspace shows conversation, tool activity, project context, th
 | `Ctrl+S` | Browse saved and automatic sessions |
 | `Ctrl+A` | Cycle permission mode: read-only → balanced → autonomous |
 | `Ctrl+T` | Toggle mouse capture on or off |
-| `Ctrl+Y` | Open the focused pane in the borderless reader |
+| `Ctrl+Y` | Open the conversation in the full-screen reader |
 | `Ctrl+E` | Open full session status or the latest error in the reader |
-| `Tab` | Move focus between visible panes |
+| `Tab` | Switch between typing and scrolling the conversation |
 | `Page Up` / `Page Down` | Scroll conversation history |
 | `Ctrl+J` | Insert a newline in the composer |
 | `Esc` | Close an overlay or cancel the active turn |
@@ -140,9 +142,9 @@ The full-screen workspace shows conversation, tool activity, project context, th
 
 When an approval prompt is showing, use `←`/`→` or `Tab` to move between "Allow once" and "Deny" and `Enter` to confirm the highlighted choice, or the `Y`/`N` shortcuts directly — the highlighted choice defaults to Deny. Mouse clicks on it (or anywhere else) only register once mouse capture is on (`Ctrl+T`).
 
-Native text selection is the default: drag normally to select and copy terminal text. Press `Ctrl+T` or run `/mouse on` when you want clickable panes, footer actions, overlay rows, wheel scrolling, and approval buttons. Click `[Mouse on]` or press `Ctrl+T` again to return to selection mode. Many terminals also support `Shift+drag` for selection while mouse capture is active.
+Native text selection is the default: drag normally to select and copy terminal text. Press `Ctrl+T` or run `/mouse on` when you want clickable footer actions, overlay rows, wheel scrolling, and approval buttons. Press `Ctrl+T` again to return to selection mode. Many terminals also support `Shift+drag` for selection while mouse capture is active.
 
-Because terminals select screen rows rather than UI components, selecting directly across the three-column workspace can include neighboring borders. Focus a pane with `Tab` and press `Ctrl+Y`, or enable mouse mode and click `[Reader]`/right-click a pane. `Ctrl+E` opens the complete session status or latest error directly. Forge replaces the columns with a borderless, full-width view containing only that pane's untruncated text. Mouse capture switches off automatically so you can drag-select cleanly; `Esc` returns to the workspace.
+The conversation view truncates long messages to keep the frame bounded. Press `Ctrl+Y` for the reader — a full-screen, borderless view of the untruncated conversation that you can scroll and select cleanly. `Ctrl+E` opens the complete session status or latest error the same way. Mouse capture switches off automatically there so you can drag-select; `Esc` returns to the workspace.
 
 Commands, model names, files, and sessions are searchable inside their overlays. Prompts typed while Forge is working are queued for the next turn. The TUI autosaves conversations as `autosave` and records `recovery-latest` before approved write/process operations.
 

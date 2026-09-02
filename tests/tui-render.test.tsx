@@ -38,11 +38,11 @@ describe("Forge TUI rendering", () => {
 
     expect(output).toContain("FORGE");
     expect(output).toContain("tokens 0");
-    expect(output).toContain("[Cmd ^K]");
-    expect(output).toContain("[Mouse off ^T]");
-    expect(output).toContain("[Reader ^Y]");
-    expect(output).toContain("[Status ^E]");
-    expect(output).toContain("[Mode ^A]");
+    expect(output).toContain("^K commands");
+    expect(output).toContain("^Y reader");
+    expect(output).toContain("^A mode");
+    // Single borderless pane: no box-drawing characters anywhere.
+    expect(output).not.toMatch(/[│┌┐└┘├┤┬┴┼╭╮╰╯─═║]/);
   });
 
   it("truncates a long header status line instead of overlapping the FORGE label", async () => {
@@ -111,7 +111,7 @@ describe("Forge TUI rendering", () => {
     const frameLines = stripAnsi(lastFrame).split("\n").filter((line) => line.trim().length > 0);
 
     expect(frameLines.length).toBeLessThanOrEqual(35);
-    expect(stripAnsi(lastFrame)).toContain("more line(s) in the composer");
+    expect(stripAnsi(lastFrame)).toMatch(/…\d+ more line\(s\)/);
   });
 
   it("never emits more rows than the terminal has, under sustained flooding", async () => {

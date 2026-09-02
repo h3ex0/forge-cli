@@ -228,9 +228,7 @@ export function ForgeTui({ config }: { config: ForgeConfig }): React.ReactElemen
   const operationAbortRef = React.useRef<AbortController | null>(null);
   const messagesRef = React.useRef<ChatMessage[]>(systemMessages(config));
   const sessionRef = React.useRef<AgentSession | null>(null);
-  const activityPaneRef = React.useRef<DOMElement>(null!);
   const conversationPaneRef = React.useRef<DOMElement>(null!);
-  const contextPaneRef = React.useRef<DOMElement>(null!);
   const composerRef = React.useRef<DOMElement>(null!);
   const approvalAllowRef = React.useRef<DOMElement>(null!);
   const approvalDenyRef = React.useRef<DOMElement>(null!);
@@ -241,10 +239,8 @@ export function ForgeTui({ config }: { config: ForgeConfig }): React.ReactElemen
   const modelsButtonRef = React.useRef<DOMElement>(null!);
   const sessionsButtonRef = React.useRef<DOMElement>(null!);
   const helpButtonRef = React.useRef<DOMElement>(null!);
-  const mouseButtonRef = React.useRef<DOMElement>(null!);
   const modeButtonRef = React.useRef<DOMElement>(null!);
   const readerButtonRef = React.useRef<DOMElement>(null!);
-  const statusButtonRef = React.useRef<DOMElement>(null!);
   const theme = getTheme(config.ui.theme);
 
   React.useEffect(() => {
@@ -722,20 +718,13 @@ export function ForgeTui({ config }: { config: ForgeConfig }): React.ReactElemen
         return;
       }
       if (mouse.action === "wheel") {
-        if (containsPoint(metrics(activityPaneRef), mouse.x, mouse.y)) {
-          setFocus("activity");
-          setSelectedActivity((value) => Math.max(0, Math.min(activities.length - 1, value + (mouse.button === "wheel-down" ? 1 : -1))));
-        } else {
-          setFocus("conversation");
-          setScrollOffset((value) => Math.max(0, value + (mouse.button === "wheel-up" ? 3 : -3)));
-        }
+        setFocus("conversation");
+        setScrollOffset((value) => Math.max(0, value + (mouse.button === "wheel-up" ? 3 : -3)));
         return;
       }
       if (mouse.action === "press" && mouse.button === "right") {
-        if (containsPoint(metrics(activityPaneRef), mouse.x, mouse.y)) openReader("activity");
-        else if (containsPoint(metrics(contextPaneRef), mouse.x, mouse.y)) openReader("context");
-        else if (containsPoint(metrics(conversationPaneRef), mouse.x, mouse.y)) openReader("conversation");
-        else if (containsPoint(metrics(composerRef), mouse.x, mouse.y)) openReader("composer");
+        if (containsPoint(metrics(composerRef), mouse.x, mouse.y)) openReader("composer");
+        else openReader("conversation");
         return;
       }
       if (mouse.action !== "press" || mouse.button !== "left") return;
@@ -744,17 +733,11 @@ export function ForgeTui({ config }: { config: ForgeConfig }): React.ReactElemen
       if (containsPoint(metrics(modelsButtonRef), mouse.x, mouse.y)) { setOverlay("models"); return; }
       if (containsPoint(metrics(sessionsButtonRef), mouse.x, mouse.y)) { setOverlay("sessions"); return; }
       if (containsPoint(metrics(helpButtonRef), mouse.x, mouse.y)) { setOverlay("help"); return; }
-      if (containsPoint(metrics(mouseButtonRef), mouse.x, mouse.y)) {
-        config.ui.mouse = false; saveConfig(config); setNotice("Mouse capture off — drag to select text; Ctrl+T turns it back on."); setRevision((value) => value + 1); return;
-      }
       if (containsPoint(metrics(modeButtonRef), mouse.x, mouse.y)) { cyclePermissionMode(); return; }
       if (containsPoint(metrics(readerButtonRef), mouse.x, mouse.y)) { openReader(); return; }
-      if (containsPoint(metrics(statusButtonRef), mouse.x, mouse.y)) { openReader("context"); return; }
       for (const [index, node] of activityItemRefs.current) {
-        if (containsPoint(measureElement(node), mouse.x, mouse.y)) { setFocus("activity"); setSelectedActivity(index); return; }
+        if (containsPoint(measureElement(node), mouse.x, mouse.y)) { setSelectedActivity(index); return; }
       }
-      if (containsPoint(metrics(activityPaneRef), mouse.x, mouse.y)) { setFocus("activity"); return; }
-      if (containsPoint(metrics(contextPaneRef), mouse.x, mouse.y)) { setFocus("context"); setOverlay("context"); return; }
       if (containsPoint(metrics(conversationPaneRef), mouse.x, mouse.y)) { setFocus("conversation"); return; }
       if (containsPoint(metrics(composerRef), mouse.x, mouse.y)) { setFocus("composer"); return; }
       return;
@@ -783,8 +766,9 @@ export function ForgeTui({ config }: { config: ForgeConfig }): React.ReactElemen
     if (key.ctrl && character === "y") { openReader(); return; }
     if (key.ctrl && character === "e") { openReader("context"); return; }
     if (key.tab) {
-      const order: TuiFocus[] = wide ? ["activity", "conversation", "context", "composer"] : medium ? ["conversation", "context", "composer"] : ["conversation", "composer"];
-      setFocus((current) => order[(order.indexOf(current) + 1) % order.length]);
+      // One pane now, so Tab just swaps between typing and scrolling the
+      // conversation with the arrow keys.
+      setFocus((current) => (current === "composer" ? "conversation" : "composer"));
       return;
     }
     if (overlay) {
@@ -844,18 +828,11 @@ export function ForgeTui({ config }: { config: ForgeConfig }): React.ReactElemen
   const messageMaxLines = Math.max(15, dimensions.rows - 10);
   const end = Math.max(0, displayMessages.length - scrollOffset);
   const visibleMessages = displayMessages.slice(Math.max(0, end - maxMessages), end);
-  const wide = dimensions.columns >= 120;
-  const medium = dimensions.columns >= 90;
-  // Estimated inner width of the conversation pane, used to pre-wrap long
-  // messages ourselves so a truncation cap can be enforced on rendered rows
-  // rather than raw "\n"-delimited lines (a single very long line with no
-  // newlines would otherwise ignore any line-count-based cap entirely).
-  // Activity/context widths below are each pane's own declared `width`
-  // (which already includes that pane's border+padding, confirmed against
-  // Ink's actual layout output — not just their inner content width).
-  // Conversation's own border(2)+paddingX(2) is subtracted separately since
-  // it isn't a fixed-width pane; its share of the row comes from flexGrow.
-  const conversationPaneWidth = Math.max(20, dimensions.columns - (wide ? 25 : 0) - (medium ? (wide ? 29 : 25) : 0) - 4);
+  // Single full-width pane: only the root's paddingX(1 each side) is taken
+  // out. Used to pre-wrap messages ourselves so the row cap is enforced on
+  // rendered rows rather than raw "\n"-delimited lines (one very long line
+  // with no newlines would otherwise ignore a line-count cap entirely).
+  const conversationPaneWidth = Math.max(20, dimensions.columns - 2);
   const suggestions = tuiCommandSuggestions(input);
   const estimatedCostUsd = estimateCost(profile, usage, pricing);
   const contextTokens = estimateMessageTokens(messagesRef.current);
@@ -916,74 +893,65 @@ export function ForgeTui({ config }: { config: ForgeConfig }): React.ReactElemen
   // the wrong offset and old frames stay on screen underneath. Clipping here
   // means no component can ever push the frame past the terminal height,
   // whatever it renders.
-  return <Box flexDirection="column" height={dimensions.rows} width={dimensions.columns} overflow="hidden">
-    <Box flexShrink={0} borderStyle="round" borderColor={theme.focusBorder} paddingX={1}>
+  return <Box flexDirection="column" height={dimensions.rows} width={dimensions.columns} overflow="hidden" paddingX={1}>
+    {/* Header — no border. flexGrow+minWidth=0 on the status half forces Yoga
+        to give it a real bounded width so truncate-end has something to
+        truncate against; without it a long workspace/profile/model name
+        renders at full natural width and overwrites "FORGE". */}
+    <Box flexShrink={0}>
       <Box flexShrink={0}><Text bold color={theme.accent}>◆ FORGE</Text></Box>
-      {/* flexGrow+minWidth=0 forces Yoga to give this a real bounded width so
-          wrap="truncate-end" has something to truncate against; without it,
-          long workspace/profile/model names overflow the header and corrupt
-          it character-for-character against "FORGE" instead of truncating. */}
       <Box flexGrow={1} flexShrink={1} minWidth={0} justifyContent="flex-end">
-        <Text wrap="truncate-end"> {sanitizeTerminalText(path.basename(config.permissions.workspaceRoot))} · {sanitizeTerminalText(config.activeProfile)}/{sanitizeTerminalText(profile.model)} · {profile.kind === "local" ? "● local" : "◉ cloud"} · {config.permissions.mode}{config.routing.offline ? " · offline" : ""}</Text>
+        {/* Leading space matters: with truncate-end the status fills the whole
+            remaining width when it's long, and without it the text butts
+            straight up against "FORGE". */}
+        <Text wrap="truncate-end" color={theme.muted}> {sanitizeTerminalText(path.basename(config.permissions.workspaceRoot))} · {sanitizeTerminalText(config.activeProfile)}/{sanitizeTerminalText(profile.model)} · {profile.kind === "local" ? "local" : "cloud"} · {config.permissions.mode}{config.routing.offline ? " · offline" : ""}</Text>
       </Box>
     </Box>
 
-    <Box flexGrow={1} flexShrink={1} flexBasis={0} overflow="hidden">
-      {wide && <Box ref={activityPaneRef} width={25} flexShrink={0} flexDirection="column" overflow="hidden" borderStyle="single" borderColor={focus === "activity" ? theme.focusBorder : theme.border} paddingX={1}>
-        <Text bold color={theme.accent}>ACTIVITY</Text>
-        {activities.slice(0, Math.max(3, dimensions.rows - 10)).map((item, index) => <Box key={item.id} ref={(node) => { if (node) activityItemRefs.current.set(index, node); else activityItemRefs.current.delete(index); }}><Text inverse={focus === "activity" && index === selectedActivity} color={item.status === "failed" ? theme.danger : item.status === "completed" ? theme.success : theme.warning} wrap="truncate-end">
-          {statusSymbol(item.status)} {sanitizeTerminalText(item.name)} {item.durationMs != null ? `${item.durationMs}ms` : ""}
-        </Text></Box>)}
-        {!activities.length && <Text color={theme.muted}>Tool calls appear here.</Text>}
-      </Box>}
-
-      <Box ref={conversationPaneRef} flexGrow={1} flexShrink={1} flexBasis={0} flexDirection="column" overflow="hidden" borderStyle="single" borderColor={focus === "conversation" ? theme.focusBorder : theme.border} paddingX={1}>
-        {visibleMessages.map((message, index) => <MessageBlock key={`${message.role}-${index}`} message={message} theme={theme} maxLines={messageMaxLines} paneWidth={conversationPaneWidth} />)}
-        {!visibleMessages.length && <Box flexGrow={1} alignItems="center" justifyContent="center"><Text color={theme.muted}>Ask about this workspace, press Ctrl+K for commands, or Ctrl+M for models.</Text></Box>}
-      </Box>
-
-      {medium && <Box ref={contextPaneRef} width={wide ? 29 : 25} flexShrink={0} flexDirection="column" overflow="hidden" borderStyle="single" borderColor={focus === "context" ? theme.focusBorder : theme.border} paddingX={1}>
-        <Text bold color={theme.accent}>CONTEXT</Text>
-        <Text wrap="truncate-end">Workspace: {sanitizeTerminalText(path.basename(config.permissions.workspaceRoot))}</Text>
-        <Text>Instructions: {loadProjectInstructions(config.permissions.workspaceRoot).length}</Text>
-        <Text>Pinned files: {contextFilesRef.current.size}</Text>
-        <Text>Messages: {allMessages.length}</Text>
-        <Text>Context: ~{estimateMessageTokens(messagesRef.current).toLocaleString("en-US")} tokens</Text>
-        <Text color={theme.muted}>Ctrl+P add files</Text>
-        <Box marginTop={1} flexDirection="column"><Text bold color={theme.accent}>SESSION</Text><Text>{busy ? "● Working" : "○ Ready"}</Text>
-          {/* Bounded for the same reason as the composer: a long notice (a
-              provider error body, say) would otherwise grow this pane and
-              push the frame past the terminal's height. Ctrl+E opens the
-              full text in the reader. */}
-          {wrapReaderText(sanitizeTerminalText(notice), (wide ? 29 : 25) - 4).slice(0, 4).map((row, index) => (
-            <Text key={index} color={theme.muted} wrap="truncate-end">{row || " "}</Text>
-          ))}
-        </Box>
-      </Box>}
+    {/* Conversation — the single pane. */}
+    <Box ref={conversationPaneRef} flexGrow={1} flexShrink={1} flexBasis={0} flexDirection="column" overflow="hidden" marginTop={1}>
+      {visibleMessages.map((message, index) => <MessageBlock key={`${message.role}-${index}`} message={message} theme={theme} maxLines={messageMaxLines} paneWidth={conversationPaneWidth} />)}
+      {!visibleMessages.length && <Box flexGrow={1} alignItems="center" justifyContent="center"><Text color={theme.muted}>Ask about this workspace · ^K commands · ^M models</Text></Box>}
     </Box>
 
-    <Box ref={composerRef} flexDirection="column" flexShrink={0} overflow="hidden" borderStyle="round" borderColor={busy ? theme.warning : focus === "composer" ? theme.focusBorder : theme.border} paddingX={1} minHeight={3}>
+    {/* Recent tool activity, inline instead of a side pane. */}
+    {activities.length > 0 && <Box flexShrink={0} flexDirection="column" overflow="hidden">
+      {activities.slice(0, 3).map((item, index) => <Box key={item.id} ref={(node) => { if (node) activityItemRefs.current.set(index, node); else activityItemRefs.current.delete(index); }}>
+        <Text color={item.status === "failed" ? theme.danger : item.status === "completed" ? theme.success : theme.warning} wrap="truncate-end">
+          {statusSymbol(item.status)} {sanitizeTerminalText(item.name)}{item.durationMs != null ? ` ${item.durationMs}ms` : ""}
+        </Text>
+      </Box>)}
+    </Box>}
+
+    {/* Composer — bounded rows so nothing can push the frame past the screen. */}
+    <Box ref={composerRef} flexDirection="column" flexShrink={0} overflow="hidden" marginTop={1}>
       {visibleComposerRows.map((row, index) => (
         <Text key={index} color={busy ? theme.warning : theme.text} wrap="truncate-end">{row || " "}</Text>
       ))}
-      {hiddenComposerRows > 0 && <Text color={theme.muted} wrap="truncate-end">…{hiddenComposerRows} more line(s) in the composer</Text>}
+      {hiddenComposerRows > 0 && <Text color={theme.muted} wrap="truncate-end">…{hiddenComposerRows} more line(s)</Text>}
     </Box>
-    {suggestions.length > 0 && !overlay && <Text color={theme.muted}> {suggestions.join("  ")}</Text>}
-    <Box paddingX={1} overflow="hidden">
+    {suggestions.length > 0 && <Text color={theme.muted} wrap="truncate-end">{suggestions.join("  ")}</Text>}
+    {queuedPrompt && <Text color={theme.warning} wrap="truncate-end">queued: {sanitizeTerminalText(queuedPrompt)}</Text>}
+
+    {/* Status: state + notice, then usage, then shortcuts. */}
+    <Box flexShrink={0} overflow="hidden" marginTop={1}>
+      <Box flexShrink={0}><Text color={busy ? theme.warning : theme.success}>{busy ? "● working" : "○ ready"}</Text></Box>
+      <Box flexGrow={1} flexShrink={1} minWidth={0}>
+        {/* "Ready" would just repeat the state indicator to its left. */}
+        <Text color={notice.startsWith("Error:") ? theme.danger : theme.muted} wrap="truncate-end">{notice === "Ready" ? "" : ` ${sanitizeTerminalText(notice)}`}</Text>
+      </Box>
+    </Box>
+    <Box flexShrink={0} overflow="hidden">
       <Text color={limitExceeded ? theme.danger : theme.muted} bold={limitExceeded} wrap="truncate-end">{sanitizeTerminalText(usageLine)}</Text>
     </Box>
-    {queuedPrompt && <Text color={theme.warning} wrap="truncate-end"> Queued: {sanitizeTerminalText(queuedPrompt)}</Text>}
-    <Box paddingX={1} gap={1} overflow="hidden">
-      <Box ref={commandButtonRef}><Text color={theme.muted}>[Cmd ^K]</Text></Box>
-      <Box ref={filesButtonRef}><Text color={theme.muted}>[Files ^P]</Text></Box>
-      <Box ref={modelsButtonRef}><Text color={theme.muted}>[Models ^M]</Text></Box>
-      <Box ref={sessionsButtonRef}><Text color={theme.muted}>[Sessions ^S]</Text></Box>
-      <Box ref={helpButtonRef}><Text color={theme.muted}>[Help ?]</Text></Box>
-      <Box ref={readerButtonRef}><Text color={theme.muted}>[Reader ^Y]</Text></Box>
-      <Box ref={statusButtonRef}><Text color={notice.startsWith("Error:") ? theme.danger : theme.muted}>[Status ^E]</Text></Box>
-      <Box ref={mouseButtonRef}><Text color={config.ui.mouse ? theme.warning : theme.muted}>[Mouse {config.ui.mouse ? "on" : "off"} ^T]</Text></Box>
-      <Box ref={modeButtonRef}><Text color={config.permissions.mode === "autonomous" ? theme.warning : theme.muted}>[Mode ^A]</Text></Box>
-      <Text color={theme.muted}> Tab panes</Text>
+    <Box flexShrink={0} gap={2} overflow="hidden">
+      <Box ref={commandButtonRef}><Text color={theme.muted}>^K commands</Text></Box>
+      <Box ref={filesButtonRef}><Text color={theme.muted}>^P files</Text></Box>
+      <Box ref={modelsButtonRef}><Text color={theme.muted}>^M models</Text></Box>
+      <Box ref={sessionsButtonRef}><Text color={theme.muted}>^S sessions</Text></Box>
+      <Box ref={readerButtonRef}><Text color={theme.muted}>^Y reader</Text></Box>
+      <Box ref={modeButtonRef}><Text color={config.permissions.mode === "autonomous" ? theme.warning : theme.muted}>^A mode</Text></Box>
+      <Box ref={helpButtonRef}><Text color={theme.muted}>? help</Text></Box>
     </Box>
   </Box>;
 }

@@ -60,6 +60,6 @@ export function renderUsageStatus(config: ForgeConfig, usage: UsageView, columns
     const limit = usage.rateLimits.requestLimit != null ? `/${compactNumber(usage.rateLimits.requestLimit)}` : "";
     parts.push(`requests ${compactNumber(usage.rateLimits.requestRemaining)}${limit} left`);
   }
-  const line = parts.join(" | ");
+  const line = parts.join(" · ");
   return line.length <= columns ? line : `${line.slice(0, Math.max(1, columns - 1))}…`;
 }
