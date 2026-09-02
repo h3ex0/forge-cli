@@ -42,7 +42,8 @@ describe("Forge TUI rendering", () => {
     expect(output).toContain("^Y reader");
     expect(output).toContain("^A balanced");
     // Single borderless pane: no box-drawing characters anywhere.
-    expect(output).not.toMatch(/[│┌┐└┘├┤┬┴┼╭╮╰╯─═║]/);
+    // Horizontal rules around the composer are wanted; nothing vertical.
+    expect(output).not.toMatch(/[│┌┐└┘├┤┬┴┼╭╮╰╯═║|]/);
   });
 
   it("welcomes a new session, and degrades the welcome by available height", async () => {
@@ -66,15 +67,15 @@ describe("Forge TUI rendering", () => {
       return frame.replace(/\x1b\[[0-9;]*m/g, "").replace(/\x1b\[[0-9]*[A-Za-z]/g, "");
     };
 
-    const roomy = await frameAt(100, 30);
-    expect(roomy).toContain("/ _/__"); // wordmark
+    const roomy = await frameAt(100, 32);
+    expect(roomy).toContain("/ __/___"); // wordmark
     expect(roomy).toContain("workspace");
     expect(roomy).toContain("describe what you want to build");
 
     // Tight terminal: the wordmark and the session summary drop out before
     // the essentials do, and the frame still fits.
     const small = await frameAt(80, 14);
-    expect(small).not.toContain("/ _/__");
+    expect(small).not.toContain("/ __/___");
     expect(small).toContain("◆ forge");
     expect(small).toContain("describe what you want to build");
     expect(small.split("\n").filter((line) => line.trim().length > 0).length).toBeLessThanOrEqual(14);

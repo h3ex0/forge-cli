@@ -110,12 +110,21 @@ export function MessageBlock({ message, theme, maxLines, paneWidth }: { message:
 // Deliberately drawn with only "_", "/", "\" and spaces: no box-drawing
 // characters and no vertical bars, matching the borderless design.
 const WORDMARK = [
-  "   ___                  ",
-  "  / _/__  _______ ____  ",
-  " / _/ _ \\/ __/ _ `/ -_) ",
-  "/_/ \\___/_/  \\_, /\\__/  ",
-  "            /___/       ",
+  "    ____                    ",
+  "   / __/___  _________ ____ ",
+  "  / /_/ __ \\/ ___/ __ `/ _ \\",
+  " / __/ /_/ / /  / /_/ /  __/",
+  "/_/  \\____/_/   \\__, /\\___/ ",
+  "               /____/       ",
 ];
+
+// Per-row colours for the wordmark, giving it a vertical gradient. Themes
+// that are deliberately monochrome (mono, contrast, NO_COLOR, non-TTY) fall
+// back to a single colour rather than forcing colour where it isn't wanted.
+const WORDMARK_GRADIENTS: Record<string, string[]> = {
+  magenta: ["#ff7ab8", "#ff5fa8", "#f45d9e", "#d95dc4", "#b45ce0", "#8f5bf0"],
+  cyan: ["#7fe7ff", "#4fd8ff", "#26c6ff", "#12aaff", "#0a8bf5", "#0d6fe0"],
+};
 
 /**
  * Shown whenever a session has no conversation yet — a fresh start, /new, or
@@ -133,33 +142,43 @@ function WelcomeScreen({ theme, config, profile, height, hasResumable }: {
   const project = React.useMemo(() => detectProject(config.permissions.workspaceRoot), [config.permissions.workspaceRoot]);
   const instructions = React.useMemo(() => loadProjectInstructions(config.permissions.workspaceRoot), [config.permissions.workspaceRoot]);
   const workspace = path.basename(config.permissions.workspaceRoot);
-  const showWordmark = height >= 16;
-  const showSummary = height >= 11;
+  const showWordmark = height >= 17;
+  const showSummary = height >= 12;
+  const gradient = WORDMARK_GRADIENTS[theme.accent];
 
-  const facts: Array<[string, string]> = [
-    ["workspace", [workspace, ...project.languages, project.git ? "git" : undefined, project.packageManager].filter(Boolean).join(" · ")],
-    ["model", `${config.activeProfile}/${profile.model} · ${profile.kind === "local" ? "local" : "cloud"}${config.routing.offline ? " · offline" : ""}`],
-    ["mode", config.permissions.mode === "autonomous" ? "autonomous · tools run without asking" : config.permissions.mode === "read-only" ? "read-only · writes are blocked" : "balanced · asks before writing or running"],
+  const facts: Array<[string, string, string]> = [
+    ["workspace", [workspace, ...project.languages, project.git ? "git" : undefined, project.packageManager].filter(Boolean).join(" · "), theme.accent],
+    ["model", `${config.activeProfile}/${profile.model} · ${profile.kind === "local" ? "local" : "cloud"}${config.routing.offline ? " · offline" : ""}`, theme.success],
+    ["mode", config.permissions.mode === "autonomous" ? "autonomous · tools run without asking" : config.permissions.mode === "read-only" ? "read-only · writes are blocked" : "balanced · asks before writing or running",
+      config.permissions.mode === "autonomous" ? theme.warning : theme.muted],
   ];
-  if (instructions.length) facts.push(["context", `${instructions.map((item) => item.file).join(", ")} loaded`]);
+  if (instructions.length) facts.push(["context", `${instructions.map((item) => item.file).join(", ")} loaded`, theme.code]);
 
   return <Box flexDirection="column" alignItems="center" justifyContent="center" flexGrow={1}>
-    {showWordmark && <Box flexDirection="column" marginBottom={1}>
-      {WORDMARK.map((line, index) => <Text key={index} color={theme.accent} bold={index < 3}>{line}</Text>)}
+    {showWordmark && <Box flexDirection="column">
+      {WORDMARK.map((line, index) => (
+        <Text key={index} color={gradient ? gradient[index] ?? gradient.at(-1) : theme.accent} bold>{line}</Text>
+      ))}
     </Box>}
     {!showWordmark && <Text color={theme.accent} bold>◆ forge</Text>}
-    <Text color={theme.muted} dimColor>v{VERSION}</Text>
+
+    <Box marginTop={showWordmark ? 1 : 0}>
+      <Text color={theme.muted} dimColor>local-first coding agent</Text>
+      <Text color={theme.muted} dimColor> · </Text>
+      <Text color={theme.accent}>v{VERSION}</Text>
+    </Box>
 
     {showSummary && <Box flexDirection="column" marginTop={1}>
-      {facts.map(([label, value]) => <Box key={label}>
+      {facts.map(([label, value, colour]) => <Box key={label}>
+        <Text color={colour}>◆ </Text>
         <Box width={11} flexShrink={0}><Text color={theme.muted} dimColor>{label}</Text></Box>
         <Text color={theme.text} wrap="truncate-end">{sanitizeTerminalText(value)}</Text>
       </Box>)}
     </Box>}
 
     <Box marginTop={1} flexDirection="column" alignItems="center">
-      <Text color={theme.muted}>describe what you want to build, or press <Text color={theme.accent}>?</Text> for help</Text>
-      {hasResumable && <Text color={theme.muted} dimColor>^S to pick up your last session</Text>}
+      <Text color={theme.muted}>describe what you want to build, or press <Text color={theme.accent} bold>?</Text> for help</Text>
+      {hasResumable && <Text color={theme.muted} dimColor>press <Text color={theme.accent}>^S</Text> to pick up your last session</Text>}
     </Box>
   </Box>;
 }
@@ -1002,12 +1021,22 @@ export function ForgeTui({ config }: { config: ForgeConfig }): React.ReactElemen
       </Box>)}
     </Box>}
 
-    {/* Composer — bounded rows so nothing can push the frame past the screen. */}
-    <Box ref={composerRef} flexDirection="column" flexShrink={0} overflow="hidden" marginTop={1}>
+    {/* Composer, framed by a rule above and below. Horizontal only — nothing
+        vertical, so this stays a single pane rather than a box. The rules
+        pick up the accent colour while typing and the warning colour while a
+        turn is running, which makes the input's state obvious at a glance.
+        Bounded rows so nothing can push the frame past the screen. */}
+    <Box flexShrink={0} marginTop={1}>
+      <Text color={busy ? theme.warning : focus === "composer" ? theme.accent : theme.muted} dimColor={!busy && focus !== "composer"}>{"─".repeat(Math.max(0, dimensions.columns - 2))}</Text>
+    </Box>
+    <Box ref={composerRef} flexDirection="column" flexShrink={0} overflow="hidden">
       {visibleComposerRows.map((row, index) => (
         <Text key={index} color={busy ? theme.warning : theme.text} wrap="truncate-end">{row || " "}</Text>
       ))}
       {hiddenComposerRows > 0 && <Text color={theme.muted} wrap="truncate-end">… {hiddenComposerRows} more line{hiddenComposerRows === 1 ? "" : "s"}</Text>}
+    </Box>
+    <Box flexShrink={0}>
+      <Text color={busy ? theme.warning : focus === "composer" ? theme.accent : theme.muted} dimColor={!busy && focus !== "composer"}>{"─".repeat(Math.max(0, dimensions.columns - 2))}</Text>
     </Box>
     {suggestions.length > 0 && <Box paddingLeft={2}><Text color={theme.accent} dimColor wrap="truncate-end">{suggestions.join("   ")}</Text></Box>}
     {queuedPrompt && <Box paddingLeft={2}><Text color={theme.warning} wrap="truncate-end">queued · {sanitizeTerminalText(queuedPrompt)}</Text></Box>}
