@@ -14,7 +14,8 @@ import { applyUndo, popUndo } from "../undo.js";
 import { inspectLocalModel, listRuntimeSummaries, pullLocalModel } from "../runtime/service.js";
 import { startRuntime, stopOwnedRuntime } from "../runtime/process.js";
 import { listSessions, loadSession, saveSession } from "../session.js";
-import { loadProjectInstructions } from "../project.js";
+import { detectProject, loadProjectInstructions } from "../project.js";
+import { VERSION } from "../version.js";
 import { resolveWorkspacePath } from "../security/workspace.js";
 import { estimateCost, estimateMessageTokens, renderUsageStatus } from "../usage.js";
 import { loadUsageLedger } from "../usage-store.js";
@@ -80,6 +81,36 @@ export function MessageBlock({ message, theme, maxLines, paneWidth }) {
                         const bullet = /^\s*[-*•]\s/.test(line);
                         return _jsx(Text, { color: heading ? theme.accent : code ? theme.code : bullet ? theme.text : theme.text, bold: heading, dimColor: !heading && !code && !isUser ? false : undefined, wrap: "truncate-end", children: line || " " }, index);
                     }), overflow > 0 && _jsxs(Text, { color: theme.muted, wrap: "truncate-end", children: ["\u2026 ", overflow, " more line", overflow === 1 ? "" : "s", " \u00B7 ^Y to read it all"] })] })] });
+}
+// Deliberately drawn with only "_", "/", "\" and spaces: no box-drawing
+// characters and no vertical bars, matching the borderless design.
+const WORDMARK = [
+    "   ___                  ",
+    "  / _/__  _______ ____  ",
+    " / _/ _ \\/ __/ _ `/ -_) ",
+    "/_/ \\___/_/  \\_, /\\__/  ",
+    "            /___/       ",
+];
+/**
+ * Shown whenever a session has no conversation yet — a fresh start, /new, or
+ * a cleared history. Degrades by available height: the wordmark and the
+ * session summary each drop out before the essentials do, so this can never
+ * be what pushes the frame past the terminal.
+ */
+function WelcomeScreen({ theme, config, profile, height, hasResumable }) {
+    const project = React.useMemo(() => detectProject(config.permissions.workspaceRoot), [config.permissions.workspaceRoot]);
+    const instructions = React.useMemo(() => loadProjectInstructions(config.permissions.workspaceRoot), [config.permissions.workspaceRoot]);
+    const workspace = path.basename(config.permissions.workspaceRoot);
+    const showWordmark = height >= 16;
+    const showSummary = height >= 11;
+    const facts = [
+        ["workspace", [workspace, ...project.languages, project.git ? "git" : undefined, project.packageManager].filter(Boolean).join(" · ")],
+        ["model", `${config.activeProfile}/${profile.model} · ${profile.kind === "local" ? "local" : "cloud"}${config.routing.offline ? " · offline" : ""}`],
+        ["mode", config.permissions.mode === "autonomous" ? "autonomous · tools run without asking" : config.permissions.mode === "read-only" ? "read-only · writes are blocked" : "balanced · asks before writing or running"],
+    ];
+    if (instructions.length)
+        facts.push(["context", `${instructions.map((item) => item.file).join(", ")} loaded`]);
+    return _jsxs(Box, { flexDirection: "column", alignItems: "center", justifyContent: "center", flexGrow: 1, children: [showWordmark && _jsx(Box, { flexDirection: "column", marginBottom: 1, children: WORDMARK.map((line, index) => _jsx(Text, { color: theme.accent, bold: index < 3, children: line }, index)) }), !showWordmark && _jsx(Text, { color: theme.accent, bold: true, children: "\u25C6 forge" }), _jsxs(Text, { color: theme.muted, dimColor: true, children: ["v", VERSION] }), showSummary && _jsx(Box, { flexDirection: "column", marginTop: 1, children: facts.map(([label, value]) => _jsxs(Box, { children: [_jsx(Box, { width: 11, flexShrink: 0, children: _jsx(Text, { color: theme.muted, dimColor: true, children: label }) }), _jsx(Text, { color: theme.text, wrap: "truncate-end", children: sanitizeTerminalText(value) })] }, label)) }), _jsxs(Box, { marginTop: 1, flexDirection: "column", alignItems: "center", children: [_jsxs(Text, { color: theme.muted, children: ["describe what you want to build, or press ", _jsx(Text, { color: theme.accent, children: "?" }), " for help"] }), hasResumable && _jsx(Text, { color: theme.muted, dimColor: true, children: "^S to pick up your last session" })] })] });
 }
 /**
  * Full-screen frame shell shared by every modal-like view (overlay lists,
@@ -165,6 +196,17 @@ export function ForgeTui({ config }) {
         return entry ? entry.promptTokens + entry.completionTokens : 0;
     });
     const [pricing, setPricing] = React.useState();
+    // Read once at startup: the welcome screen only mentions this to offer
+    // picking up where the last run left off, and it shouldn't hit the disk on
+    // every render to do it.
+    const [hasResumableSession] = React.useState(() => {
+        try {
+            return listSessions().includes("autosave");
+        }
+        catch {
+            return false;
+        }
+    });
     const contextFilesRef = React.useRef(new Map());
     const pastedBlocksRef = React.useRef(new Map());
     const pasteCounterRef = React.useRef(0);
@@ -1148,8 +1190,8 @@ export function ForgeTui({ config }) {
     // the wrong offset and old frames stay on screen underneath. Clipping here
     // means no component can ever push the frame past the terminal height,
     // whatever it renders.
-    return _jsxs(Box, { flexDirection: "column", height: dimensions.rows, width: dimensions.columns, overflow: "hidden", paddingX: 1, children: [_jsxs(Box, { flexShrink: 0, children: [_jsxs(Box, { flexShrink: 0, children: [_jsx(Text, { bold: true, color: theme.accent, children: "\u25C6 forge" }), _jsxs(Text, { color: theme.muted, dimColor: true, children: [" \u00B7 ", sanitizeTerminalText(path.basename(config.permissions.workspaceRoot))] })] }), _jsx(Box, { flexGrow: 1, flexShrink: 1, minWidth: 0, justifyContent: "flex-end", children: _jsxs(Text, { wrap: "truncate-end", color: theme.muted, children: [" ", sanitizeTerminalText(config.activeProfile), "/", sanitizeTerminalText(profile.model), " \u00B7 ", profile.kind === "local" ? "local" : "cloud", config.routing.offline ? " · offline" : ""] }) })] }), _jsxs(Box, { ref: conversationPaneRef, flexGrow: 1, flexShrink: 1, flexBasis: 0, flexDirection: "column", justifyContent: "flex-end", overflow: "hidden", marginTop: 1, children: [visibleMessages.map((message, index) => _jsx(MessageBlock, { message: message, theme: theme, maxLines: messageMaxLines, paneWidth: conversationPaneWidth }, `${message.role}-${index}`)), !visibleMessages.length && _jsxs(Box, { flexGrow: 1, flexDirection: "column", alignItems: "center", justifyContent: "center", children: [_jsx(Text, { color: theme.accent, bold: true, children: sanitizeTerminalText(profile.model) }), _jsx(Text, { color: theme.muted, children: "ask anything about this workspace" }), _jsx(Box, { marginTop: 1, children: _jsx(Text, { color: theme.muted, dimColor: true, children: "^K commands   ^P add files   ^M models   ? help" }) })] })] }), activities.length > 0 && _jsx(Box, { flexShrink: 0, flexDirection: "column", overflow: "hidden", marginTop: 1, children: activities.slice(0, 3).map((item, index) => _jsxs(Box, { ref: (node) => { if (node)
+    return _jsxs(Box, { flexDirection: "column", height: dimensions.rows, width: dimensions.columns, overflow: "hidden", paddingX: 1, children: [_jsxs(Box, { flexShrink: 0, children: [_jsxs(Box, { flexShrink: 0, children: [_jsx(Text, { bold: true, color: theme.accent, children: "\u25C6 forge" }), _jsxs(Text, { color: theme.muted, dimColor: true, children: [" \u00B7 ", sanitizeTerminalText(path.basename(config.permissions.workspaceRoot))] })] }), _jsx(Box, { flexGrow: 1, flexShrink: 1, minWidth: 0, justifyContent: "flex-end", children: _jsxs(Text, { wrap: "truncate-end", color: theme.muted, children: [" ", sanitizeTerminalText(config.activeProfile), "/", sanitizeTerminalText(profile.model), " \u00B7 ", profile.kind === "local" ? "local" : "cloud", config.routing.offline ? " · offline" : ""] }) })] }), _jsxs(Box, { ref: conversationPaneRef, flexGrow: 1, flexShrink: 1, flexBasis: 0, flexDirection: "column", justifyContent: "flex-end", overflow: "hidden", marginTop: 1, children: [visibleMessages.map((message, index) => _jsx(MessageBlock, { message: message, theme: theme, maxLines: messageMaxLines, paneWidth: conversationPaneWidth }, `${message.role}-${index}`)), !visibleMessages.length && _jsx(WelcomeScreen, { theme: theme, config: config, profile: profile, height: Math.max(0, dimensions.rows - 8), hasResumable: hasResumableSession })] }), activities.length > 0 && _jsx(Box, { flexShrink: 0, flexDirection: "column", overflow: "hidden", marginTop: 1, children: activities.slice(0, 3).map((item, index) => _jsxs(Box, { ref: (node) => { if (node)
                         activityItemRefs.current.set(index, node);
                     else
-                        activityItemRefs.current.delete(index); }, children: [_jsxs(Text, { color: item.status === "failed" ? theme.danger : item.status === "completed" ? theme.success : theme.warning, children: [statusSymbol(item.status), " "] }), _jsxs(Text, { color: theme.muted, wrap: "truncate-end", children: [sanitizeTerminalText(item.name), item.durationMs != null ? ` · ${item.durationMs}ms` : ""] })] }, item.id)) }), _jsxs(Box, { ref: composerRef, flexDirection: "column", flexShrink: 0, overflow: "hidden", marginTop: 1, children: [visibleComposerRows.map((row, index) => (_jsx(Text, { color: busy ? theme.warning : theme.text, wrap: "truncate-end", children: row || " " }, index))), hiddenComposerRows > 0 && _jsxs(Text, { color: theme.muted, wrap: "truncate-end", children: ["\u2026 ", hiddenComposerRows, " more line", hiddenComposerRows === 1 ? "" : "s"] })] }), suggestions.length > 0 && _jsx(Box, { paddingLeft: 2, children: _jsx(Text, { color: theme.accent, dimColor: true, wrap: "truncate-end", children: suggestions.join("   ") }) }), queuedPrompt && _jsx(Box, { paddingLeft: 2, children: _jsxs(Text, { color: theme.warning, wrap: "truncate-end", children: ["queued \u00B7 ", sanitizeTerminalText(queuedPrompt)] }) }), _jsxs(Box, { flexShrink: 0, overflow: "hidden", marginTop: 1, children: [_jsxs(Box, { flexShrink: 0, children: [_jsx(Text, { color: busy ? theme.warning : theme.success, children: busy ? "●" : "○" }), _jsxs(Text, { color: theme.muted, children: [" ", busy ? "working" : "ready"] })] }), _jsx(Box, { flexGrow: 1, flexShrink: 1, minWidth: 0, children: _jsx(Text, { color: notice.startsWith("Error:") ? theme.danger : theme.muted, wrap: "truncate-end", children: notice === "Ready" ? "" : ` · ${sanitizeTerminalText(notice)}` }) }), _jsx(Box, { flexShrink: 0, children: _jsx(Text, { color: limitExceeded ? theme.danger : theme.muted, bold: limitExceeded, dimColor: !limitExceeded, wrap: "truncate-end", children: sanitizeTerminalText(usageLine) }) })] }), _jsxs(Box, { flexShrink: 0, gap: 3, overflow: "hidden", children: [_jsx(Box, { ref: commandButtonRef, children: _jsx(Text, { color: theme.muted, dimColor: true, children: "^K cmds" }) }), _jsx(Box, { ref: filesButtonRef, children: _jsx(Text, { color: theme.muted, dimColor: true, children: "^P files" }) }), _jsx(Box, { ref: modelsButtonRef, children: _jsx(Text, { color: theme.muted, dimColor: true, children: "^M models" }) }), _jsx(Box, { ref: sessionsButtonRef, children: _jsx(Text, { color: theme.muted, dimColor: true, children: "^S sessions" }) }), _jsx(Box, { ref: readerButtonRef, children: _jsx(Text, { color: theme.muted, dimColor: true, children: "^Y reader" }) }), _jsx(Box, { ref: modeButtonRef, children: _jsxs(Text, { color: config.permissions.mode === "autonomous" ? theme.warning : theme.muted, dimColor: config.permissions.mode !== "autonomous", children: ["^A ", config.permissions.mode] }) }), _jsx(Box, { ref: helpButtonRef, children: _jsx(Text, { color: theme.muted, dimColor: true, children: "? help" }) })] })] });
+                        activityItemRefs.current.delete(index); }, children: [_jsxs(Text, { color: item.status === "failed" ? theme.danger : item.status === "completed" ? theme.success : theme.warning, children: [statusSymbol(item.status), " "] }), _jsxs(Text, { color: theme.muted, wrap: "truncate-end", children: [sanitizeTerminalText(item.name), item.durationMs != null ? ` · ${item.durationMs}ms` : ""] })] }, item.id)) }), _jsxs(Box, { ref: composerRef, flexDirection: "column", flexShrink: 0, overflow: "hidden", marginTop: 1, children: [visibleComposerRows.map((row, index) => (_jsx(Text, { color: busy ? theme.warning : theme.text, wrap: "truncate-end", children: row || " " }, index))), hiddenComposerRows > 0 && _jsxs(Text, { color: theme.muted, wrap: "truncate-end", children: ["\u2026 ", hiddenComposerRows, " more line", hiddenComposerRows === 1 ? "" : "s"] })] }), suggestions.length > 0 && _jsx(Box, { paddingLeft: 2, children: _jsx(Text, { color: theme.accent, dimColor: true, wrap: "truncate-end", children: suggestions.join("   ") }) }), queuedPrompt && _jsx(Box, { paddingLeft: 2, children: _jsxs(Text, { color: theme.warning, wrap: "truncate-end", children: ["queued \u00B7 ", sanitizeTerminalText(queuedPrompt)] }) }), _jsxs(Box, { flexShrink: 0, overflow: "hidden", marginTop: 1, children: [_jsxs(Box, { flexShrink: 0, children: [_jsx(Text, { color: busy ? theme.warning : theme.success, children: busy ? "●" : "○" }), _jsxs(Text, { color: theme.muted, children: [" ", busy ? "working" : "ready"] })] }), _jsx(Box, { flexGrow: 1, flexShrink: 1, minWidth: 0, children: _jsx(Text, { color: notice.startsWith("Error:") ? theme.danger : theme.muted, wrap: "truncate-end", children: notice === "Ready" ? "" : ` · ${sanitizeTerminalText(notice)}` }) }), _jsx(Box, { flexShrink: 0, children: _jsx(Text, { color: limitExceeded ? theme.danger : theme.muted, bold: limitExceeded, dimColor: !limitExceeded, wrap: "truncate-end", children: sanitizeTerminalText(usageLine) }) })] }), _jsxs(Box, { flexShrink: 0, gap: 3, overflow: "hidden", children: [_jsx(Box, { ref: commandButtonRef, flexShrink: 0, children: _jsx(Text, { color: theme.muted, dimColor: true, children: "^K cmds" }) }), _jsx(Box, { ref: filesButtonRef, flexShrink: 0, children: _jsx(Text, { color: theme.muted, dimColor: true, children: "^P files" }) }), _jsx(Box, { ref: modelsButtonRef, flexShrink: 0, children: _jsx(Text, { color: theme.muted, dimColor: true, children: "^M models" }) }), _jsx(Box, { ref: sessionsButtonRef, flexShrink: 0, children: _jsx(Text, { color: theme.muted, dimColor: true, children: "^S sessions" }) }), _jsx(Box, { ref: readerButtonRef, flexShrink: 0, children: _jsx(Text, { color: theme.muted, dimColor: true, children: "^Y reader" }) }), _jsx(Box, { ref: modeButtonRef, flexShrink: 0, children: _jsxs(Text, { color: config.permissions.mode === "autonomous" ? theme.warning : theme.muted, dimColor: config.permissions.mode !== "autonomous", children: ["^A ", config.permissions.mode] }) }), _jsx(Box, { ref: helpButtonRef, flexShrink: 0, children: _jsx(Text, { color: theme.muted, dimColor: true, children: "? help" }) })] })] });
 }

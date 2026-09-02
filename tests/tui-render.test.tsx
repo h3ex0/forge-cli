@@ -38,11 +38,46 @@ describe("Forge TUI rendering", () => {
 
     expect(output).toContain("◆ forge");
     expect(output).toContain("tokens 0");
-    expect(output).toContain("^K commands");
+    expect(output).toContain("^K cmds");
     expect(output).toContain("^Y reader");
     expect(output).toContain("^A balanced");
     // Single borderless pane: no box-drawing characters anywhere.
     expect(output).not.toMatch(/[│┌┐└┘├┤┬┴┼╭╮╰╯─═║]/);
+  });
+
+  it("welcomes a new session, and degrades the welcome by available height", async () => {
+    const frameAt = async (columns: number, rows: number) => {
+      const stdout = new PassThrough() as unknown as NodeJS.WriteStream;
+      const stderr = new PassThrough() as unknown as NodeJS.WriteStream;
+      const stdin = new PassThrough() as unknown as NodeJS.ReadStream;
+      Object.assign(stdout, { columns, rows, isTTY: false });
+      Object.assign(stdin, { isTTY: true, setRawMode: vi.fn(), ref: vi.fn(), unref: vi.fn() });
+      let output = "";
+      stdout.on("data", (chunk) => { output += chunk.toString(); });
+      const config = migrateConfig({ activeProfile: "test", profiles: { test: { baseURL: "https://example.test", apiKey: "", format: "openai", model: "qwen" } } });
+      const instance = render(React.createElement(ForgeTui, { config }), { stdout, stderr, stdin, interactive: false, patchConsole: false });
+      await instance.waitUntilRenderFlush();
+      await new Promise((resolve) => setTimeout(resolve, 30));
+      instance.unmount();
+      await instance.waitUntilExit();
+      const marker = "\x1b[2K\x1b[G";
+      const at = output.lastIndexOf(marker);
+      const frame = at >= 0 ? output.slice(at + marker.length) : output;
+      return frame.replace(/\x1b\[[0-9;]*m/g, "").replace(/\x1b\[[0-9]*[A-Za-z]/g, "");
+    };
+
+    const roomy = await frameAt(100, 30);
+    expect(roomy).toContain("/ _/__"); // wordmark
+    expect(roomy).toContain("workspace");
+    expect(roomy).toContain("describe what you want to build");
+
+    // Tight terminal: the wordmark and the session summary drop out before
+    // the essentials do, and the frame still fits.
+    const small = await frameAt(80, 14);
+    expect(small).not.toContain("/ _/__");
+    expect(small).toContain("◆ forge");
+    expect(small).toContain("describe what you want to build");
+    expect(small.split("\n").filter((line) => line.trim().length > 0).length).toBeLessThanOrEqual(14);
   });
 
   it("truncates a long header status line instead of overlapping the logo", async () => {

@@ -16,7 +16,8 @@ import { applyUndo, popUndo } from "../undo.js";
 import { inspectLocalModel, listRuntimeSummaries, pullLocalModel } from "../runtime/service.js";
 import { startRuntime, stopOwnedRuntime } from "../runtime/process.js";
 import { listSessions, loadSession, saveSession } from "../session.js";
-import { loadProjectInstructions } from "../project.js";
+import { detectProject, loadProjectInstructions } from "../project.js";
+import { VERSION } from "../version.js";
 import { resolveWorkspacePath } from "../security/workspace.js";
 import { estimateCost, estimateMessageTokens, renderUsageStatus } from "../usage.js";
 import { loadUsageLedger } from "../usage-store.js";
@@ -102,6 +103,63 @@ export function MessageBlock({ message, theme, maxLines, paneWidth }: { message:
         >{line || " "}</Text>;
       })}
       {overflow > 0 && <Text color={theme.muted} wrap="truncate-end">… {overflow} more line{overflow === 1 ? "" : "s"} · ^Y to read it all</Text>}
+    </Box>
+  </Box>;
+}
+
+// Deliberately drawn with only "_", "/", "\" and spaces: no box-drawing
+// characters and no vertical bars, matching the borderless design.
+const WORDMARK = [
+  "   ___                  ",
+  "  / _/__  _______ ____  ",
+  " / _/ _ \\/ __/ _ `/ -_) ",
+  "/_/ \\___/_/  \\_, /\\__/  ",
+  "            /___/       ",
+];
+
+/**
+ * Shown whenever a session has no conversation yet — a fresh start, /new, or
+ * a cleared history. Degrades by available height: the wordmark and the
+ * session summary each drop out before the essentials do, so this can never
+ * be what pushes the frame past the terminal.
+ */
+function WelcomeScreen({ theme, config, profile, height, hasResumable }: {
+  theme: ReturnType<typeof getTheme>;
+  config: ForgeConfig;
+  profile: Profile;
+  height: number;
+  hasResumable: boolean;
+}): React.ReactElement {
+  const project = React.useMemo(() => detectProject(config.permissions.workspaceRoot), [config.permissions.workspaceRoot]);
+  const instructions = React.useMemo(() => loadProjectInstructions(config.permissions.workspaceRoot), [config.permissions.workspaceRoot]);
+  const workspace = path.basename(config.permissions.workspaceRoot);
+  const showWordmark = height >= 16;
+  const showSummary = height >= 11;
+
+  const facts: Array<[string, string]> = [
+    ["workspace", [workspace, ...project.languages, project.git ? "git" : undefined, project.packageManager].filter(Boolean).join(" · ")],
+    ["model", `${config.activeProfile}/${profile.model} · ${profile.kind === "local" ? "local" : "cloud"}${config.routing.offline ? " · offline" : ""}`],
+    ["mode", config.permissions.mode === "autonomous" ? "autonomous · tools run without asking" : config.permissions.mode === "read-only" ? "read-only · writes are blocked" : "balanced · asks before writing or running"],
+  ];
+  if (instructions.length) facts.push(["context", `${instructions.map((item) => item.file).join(", ")} loaded`]);
+
+  return <Box flexDirection="column" alignItems="center" justifyContent="center" flexGrow={1}>
+    {showWordmark && <Box flexDirection="column" marginBottom={1}>
+      {WORDMARK.map((line, index) => <Text key={index} color={theme.accent} bold={index < 3}>{line}</Text>)}
+    </Box>}
+    {!showWordmark && <Text color={theme.accent} bold>◆ forge</Text>}
+    <Text color={theme.muted} dimColor>v{VERSION}</Text>
+
+    {showSummary && <Box flexDirection="column" marginTop={1}>
+      {facts.map(([label, value]) => <Box key={label}>
+        <Box width={11} flexShrink={0}><Text color={theme.muted} dimColor>{label}</Text></Box>
+        <Text color={theme.text} wrap="truncate-end">{sanitizeTerminalText(value)}</Text>
+      </Box>)}
+    </Box>}
+
+    <Box marginTop={1} flexDirection="column" alignItems="center">
+      <Text color={theme.muted}>describe what you want to build, or press <Text color={theme.accent}>?</Text> for help</Text>
+      {hasResumable && <Text color={theme.muted} dimColor>^S to pick up your last session</Text>}
     </Box>
   </Box>;
 }
@@ -228,6 +286,12 @@ export function ForgeTui({ config }: { config: ForgeConfig }): React.ReactElemen
     return entry ? entry.promptTokens + entry.completionTokens : 0;
   });
   const [pricing, setPricing] = React.useState<ModelInfo | undefined>();
+  // Read once at startup: the welcome screen only mentions this to offer
+  // picking up where the last run left off, and it shouldn't hit the disk on
+  // every render to do it.
+  const [hasResumableSession] = React.useState(() => {
+    try { return listSessions().includes("autosave"); } catch { return false; }
+  });
   const contextFilesRef = React.useRef(new Map<string, string>());
   const pastedBlocksRef = React.useRef(new Map<string, string>());
   const pasteCounterRef = React.useRef(0);
@@ -927,11 +991,7 @@ export function ForgeTui({ config }: { config: ForgeConfig }): React.ReactElemen
         oldest content is what falls off the top. */}
     <Box ref={conversationPaneRef} flexGrow={1} flexShrink={1} flexBasis={0} flexDirection="column" justifyContent="flex-end" overflow="hidden" marginTop={1}>
       {visibleMessages.map((message, index) => <MessageBlock key={`${message.role}-${index}`} message={message} theme={theme} maxLines={messageMaxLines} paneWidth={conversationPaneWidth} />)}
-      {!visibleMessages.length && <Box flexGrow={1} flexDirection="column" alignItems="center" justifyContent="center">
-        <Text color={theme.accent} bold>{sanitizeTerminalText(profile.model)}</Text>
-        <Text color={theme.muted}>ask anything about this workspace</Text>
-        <Box marginTop={1}><Text color={theme.muted} dimColor>^K commands   ^P add files   ^M models   ? help</Text></Box>
-      </Box>}
+      {!visibleMessages.length && <WelcomeScreen theme={theme} config={config} profile={profile} height={Math.max(0, dimensions.rows - 8)} hasResumable={hasResumableSession} />}
     </Box>
 
     {/* Recent tool activity, inline instead of a side pane. */}
@@ -966,14 +1026,17 @@ export function ForgeTui({ config }: { config: ForgeConfig }): React.ReactElemen
         <Text color={limitExceeded ? theme.danger : theme.muted} bold={limitExceeded} dimColor={!limitExceeded} wrap="truncate-end">{sanitizeTerminalText(usageLine)}</Text>
       </Box>
     </Box>
+    {/* flexShrink={0} on each item keeps them at natural width so the row is
+        clipped by the parent on a narrow terminal rather than each label
+        wrapping onto a second line. */}
     <Box flexShrink={0} gap={3} overflow="hidden">
-      <Box ref={commandButtonRef}><Text color={theme.muted} dimColor>^K cmds</Text></Box>
-      <Box ref={filesButtonRef}><Text color={theme.muted} dimColor>^P files</Text></Box>
-      <Box ref={modelsButtonRef}><Text color={theme.muted} dimColor>^M models</Text></Box>
-      <Box ref={sessionsButtonRef}><Text color={theme.muted} dimColor>^S sessions</Text></Box>
-      <Box ref={readerButtonRef}><Text color={theme.muted} dimColor>^Y reader</Text></Box>
-      <Box ref={modeButtonRef}><Text color={config.permissions.mode === "autonomous" ? theme.warning : theme.muted} dimColor={config.permissions.mode !== "autonomous"}>^A {config.permissions.mode}</Text></Box>
-      <Box ref={helpButtonRef}><Text color={theme.muted} dimColor>? help</Text></Box>
+      <Box ref={commandButtonRef} flexShrink={0}><Text color={theme.muted} dimColor>^K cmds</Text></Box>
+      <Box ref={filesButtonRef} flexShrink={0}><Text color={theme.muted} dimColor>^P files</Text></Box>
+      <Box ref={modelsButtonRef} flexShrink={0}><Text color={theme.muted} dimColor>^M models</Text></Box>
+      <Box ref={sessionsButtonRef} flexShrink={0}><Text color={theme.muted} dimColor>^S sessions</Text></Box>
+      <Box ref={readerButtonRef} flexShrink={0}><Text color={theme.muted} dimColor>^Y reader</Text></Box>
+      <Box ref={modeButtonRef} flexShrink={0}><Text color={config.permissions.mode === "autonomous" ? theme.warning : theme.muted} dimColor={config.permissions.mode !== "autonomous"}>^A {config.permissions.mode}</Text></Box>
+      <Box ref={helpButtonRef} flexShrink={0}><Text color={theme.muted} dimColor>? help</Text></Box>
     </Box>
   </Box>;
 }
