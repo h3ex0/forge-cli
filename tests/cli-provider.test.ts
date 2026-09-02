@@ -32,7 +32,10 @@ function readConfig(): Record<string, unknown> {
   return JSON.parse(fs.readFileSync(path.join(home, "config.json"), "utf-8"));
 }
 
-describe("forge provider / key CLI commands", () => {
+// These tests hit the real OS keychain. On Windows the first Credential
+// Manager access in a run can take several seconds, which intermittently
+// blew the 5s default and made this file flaky.
+describe("forge provider / key CLI commands", { timeout: 30_000 }, () => {
   it("adds a provider with an explicit key, activates it, and lists it", async () => {
     await run("provider", "add", "testprov", "https://api.example.test/v1", "test-model", "--key", "secret-key");
     const config = readConfig();

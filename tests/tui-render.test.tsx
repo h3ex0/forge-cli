@@ -114,6 +114,43 @@ describe("Forge TUI rendering", () => {
     expect(stripAnsi(lastFrame)).toContain("more line(s) in the composer");
   });
 
+  it("never emits more rows than the terminal has, under sustained flooding", async () => {
+    const stdout = new PassThrough() as unknown as NodeJS.WriteStream;
+    const stderr = new PassThrough() as unknown as NodeJS.WriteStream;
+    const stdin = new PassThrough() as unknown as NodeJS.ReadStream;
+    const rows = 24;
+    Object.assign(stdout, { columns: 100, rows, isTTY: false });
+    Object.assign(stdin, { isTTY: true, setRawMode: vi.fn(), ref: vi.fn(), unref: vi.fn() });
+    let output = "";
+    stdout.on("data", (chunk) => { output += chunk.toString(); });
+    const config = migrateConfig({ activeProfile: "test", profiles: { test: { baseURL: "https://example.test", apiKey: "", format: "openai", model: "qwen" } } });
+
+    const instance = render(React.createElement(ForgeTui, { config }), { stdout, stderr, stdin, interactive: false, patchConsole: false });
+    await instance.waitUntilRenderFlush();
+
+    // Sustained keystroke-sized flooding — the deliberate "hold a key down"
+    // demonstration. No frame may ever exceed the terminal's row count,
+    // because exceeding it scrolls the terminal and permanently desyncs
+    // Ink's cursor-relative redraw.
+    for (let batch = 0; batch < 40; batch += 1) {
+      stdin.write("x".repeat(60));
+      await new Promise((resolve) => setTimeout(resolve, 1));
+    }
+    await new Promise((resolve) => setTimeout(resolve, 120));
+
+    instance.unmount();
+    await instance.waitUntilExit();
+
+    const marker = "\x1b[2K\x1b[G";
+    const lastFrameStart = output.lastIndexOf(marker);
+    const lastFrame = lastFrameStart >= 0 ? output.slice(lastFrameStart + marker.length) : output;
+    const visible = lastFrame.replace(/\x1b\[[0-9;]*m/g, "").replace(/\x1b\[[0-9]*[A-Za-z]/g, "");
+    const frameHeight = visible.split("\n").filter((line) => line.trim().length > 0).length;
+
+    expect(frameHeight).toBeGreaterThan(0);
+    expect(frameHeight).toBeLessThanOrEqual(rows);
+  });
+
   it("cycles the permission mode with Ctrl+A", async () => {
     const stdout = new PassThrough() as unknown as NodeJS.WriteStream;
     const stderr = new PassThrough() as unknown as NodeJS.WriteStream;

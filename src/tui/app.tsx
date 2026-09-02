@@ -107,7 +107,7 @@ interface FrameDimensions { columns: number; rows: number }
  * as visual noise stacked on top of the modal's own text.
  */
 function Frame({ dimensions, title, titleColor, footer, children }: { dimensions: FrameDimensions; title: string; titleColor?: string; footer?: string; children: React.ReactNode }): React.ReactElement {
-  return <Box flexDirection="column" height={dimensions.rows} width={dimensions.columns} paddingX={2} paddingY={1}>
+  return <Box flexDirection="column" height={dimensions.rows} width={dimensions.columns} overflow="hidden" paddingX={2} paddingY={1}>
     <Text bold inverse color={titleColor}> {title} </Text>
     <Text> </Text>
     <Box flexDirection="column" flexGrow={1}>{children}</Box>
@@ -893,7 +893,7 @@ export function ForgeTui({ config }: { config: ForgeConfig }): React.ReactElemen
 
   if (reader) {
     const visibleReaderLines = readerLines.slice(readerOffset, readerOffset + readerPageSize);
-    return <Box flexDirection="column" height={dimensions.rows} width={dimensions.columns}>
+    return <Box flexDirection="column" height={dimensions.rows} width={dimensions.columns} overflow="hidden">
       <Text bold inverse>FORGE READER · {reader.title}</Text>
       <Text color={theme.muted}>Drag to select this pane only · Ctrl+Y/Esc close · ↑/↓ or PgUp/PgDn scroll · {readerOffset + 1}-{Math.min(readerLines.length, readerOffset + readerPageSize)}/{readerLines.length}</Text>
       <Text> </Text>
@@ -907,8 +907,17 @@ export function ForgeTui({ config }: { config: ForgeConfig }): React.ReactElemen
   if (approval) return <ApprovalModal dimensions={dimensions} allowRef={approvalAllowRef} denyRef={approvalDenyRef} state={approval} choice={approvalChoice} theme={theme} />;
   if (overlay) return <Overlay dimensions={dimensions} itemRefs={overlayItemRefs} title={overlay.toUpperCase()} query={overlayQuery} items={filteredOverlayItems} selected={selected} theme={theme} footer="Type/filter · click or ↑/↓ + Enter · wheel scroll · Esc close" />;
 
-  return <Box flexDirection="column" height={dimensions.rows} width={dimensions.columns}>
-    <Box borderStyle="round" borderColor={theme.focusBorder} paddingX={1}>
+  // overflow="hidden" on the root is the structural guarantee that makes the
+  // whole "content taller than the screen wrecks everything" class of bug
+  // impossible. height alone doesn't do it: Yoga still lets children overflow
+  // a fixed-height box, Ink then emits more lines than the terminal has rows,
+  // the terminal scrolls, and from that point Ink's cursor-relative redraw is
+  // permanently off by however far it scrolled — every later frame paints at
+  // the wrong offset and old frames stay on screen underneath. Clipping here
+  // means no component can ever push the frame past the terminal height,
+  // whatever it renders.
+  return <Box flexDirection="column" height={dimensions.rows} width={dimensions.columns} overflow="hidden">
+    <Box flexShrink={0} borderStyle="round" borderColor={theme.focusBorder} paddingX={1}>
       <Box flexShrink={0}><Text bold color={theme.accent}>◆ FORGE</Text></Box>
       {/* flexGrow+minWidth=0 forces Yoga to give this a real bounded width so
           wrap="truncate-end" has something to truncate against; without it,
