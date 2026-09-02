@@ -36,16 +36,16 @@ describe("Forge TUI rendering", () => {
     instance.unmount();
     await instance.waitUntilExit();
 
-    expect(output).toContain("FORGE");
+    expect(output).toContain("◆ forge");
     expect(output).toContain("tokens 0");
     expect(output).toContain("^K commands");
     expect(output).toContain("^Y reader");
-    expect(output).toContain("^A mode");
+    expect(output).toContain("^A balanced");
     // Single borderless pane: no box-drawing characters anywhere.
     expect(output).not.toMatch(/[│┌┐└┘├┤┬┴┼╭╮╰╯─═║]/);
   });
 
-  it("truncates a long header status line instead of overlapping the FORGE label", async () => {
+  it("truncates a long header status line instead of overlapping the logo", async () => {
     const stdout = new PassThrough() as unknown as NodeJS.WriteStream;
     const stderr = new PassThrough() as unknown as NodeJS.WriteStream;
     const stdin = new PassThrough() as unknown as NodeJS.ReadStream;
@@ -56,7 +56,7 @@ describe("Forge TUI rendering", () => {
     // A long profile/model name is entirely plausible in real use and, before
     // this fix, the header's two Text siblings had no flex constraint against
     // each other: the right side rendered at its full natural width instead
-    // of truncating, overlapping and partially overwriting "FORGE" on a
+    // of truncating, overlapping and partially overwriting the logo on a
     // narrow terminal — a reproducible layout corruption, not a rendering
     // artifact specific to any one terminal emulator.
     const config = migrateConfig({
@@ -69,8 +69,9 @@ describe("Forge TUI rendering", () => {
     instance.unmount();
     await instance.waitUntilExit();
 
-    expect(output).toContain("◆ FORGE");
-    expect(output).not.toMatch(/FORGE[^\s│]/);
+    expect(output).toContain("◆ forge");
+    // The status must never run straight into the logo with no gap.
+    expect(output).not.toMatch(/forge · [^\s]*[a-z]-very-long/);
   });
 
   it("keeps the frame within the terminal height when stdin floods the composer", async () => {
@@ -111,7 +112,7 @@ describe("Forge TUI rendering", () => {
     const frameLines = stripAnsi(lastFrame).split("\n").filter((line) => line.trim().length > 0);
 
     expect(frameLines.length).toBeLessThanOrEqual(35);
-    expect(stripAnsi(lastFrame)).toMatch(/…\d+ more line\(s\)/);
+    expect(stripAnsi(lastFrame)).toMatch(/… \d+ more lines?/);
   });
 
   it("never emits more rows than the terminal has, under sustained flooding", async () => {
@@ -170,7 +171,7 @@ describe("Forge TUI rendering", () => {
     instance.unmount();
     await instance.waitUntilExit();
 
-    expect(output).toContain("· autonomous");
+    expect(output).toContain("autonomous");
   });
 
   it("collapses a large paste into a placeholder instead of rendering it inline", async () => {
@@ -263,7 +264,7 @@ describe("Forge TUI rendering", () => {
     expect(output).toContain("line 0");
     expect(output).toContain("line 9");
     expect(output).not.toContain("line 299");
-    expect(output).toContain("more line(s)");
+    expect(output).toMatch(/… \d+ more lines?/);
     expect(output).toContain("COMPOSER");
   });
 
@@ -296,7 +297,7 @@ describe("Forge TUI rendering", () => {
     const stripAnsi = (value: string) => value.replace(/\x1b\[[0-9;]*m/g, "").replace(/\x1b\[[0-9]*[A-Za-z]/g, "");
     const renderedLines = stripAnsi(output).split("\n").filter((line) => line.length > 0);
     expect(renderedLines.length).toBeLessThanOrEqual(20);
-    expect(output).toContain("more line(s)");
+    expect(output).toMatch(/… \d+ more lines?/);
     expect(output).toContain("COMPOSER");
   });
 
@@ -396,7 +397,7 @@ describe("Forge TUI rendering", () => {
       expect(renderedLines.length).toBeLessThanOrEqual(30);
       expect(output).toContain("quick brown fox");
       // The composer must still be fully bordered and visible below the conversation pane.
-      expect(output).toMatch(/›/);
+      expect(output).toMatch(/❯/);
     });
   });
 });

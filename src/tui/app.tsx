@@ -79,20 +79,30 @@ export function MessageBlock({ message, theme, maxLines, paneWidth }: { message:
     // makes the cap exact; each pre-wrapped row is rendered with
     // wrap="truncate-end" as a backstop in case this width estimate is a
     // little off.
-    const allRows = wrapReaderText(wrapBudget, paneWidth);
+    // Content is indented under its role label, so wrap two columns narrower.
+    const allRows = wrapReaderText(wrapBudget, Math.max(20, paneWidth - 2));
     const overflow = budgetTruncated ? Math.max(1, allRows.length - maxLines) : allRows.length - maxLines;
     return { rows: overflow > 0 ? allRows.slice(0, maxLines) : allRows, overflow };
   }, [message.content, maxLines, paneWidth]);
-  const role = message.role === "user" ? "YOU" : "FORGE";
-  const color = message.role === "user" ? theme.accent : theme.success;
+  const isUser = message.role === "user";
+  const color = isUser ? theme.accent : theme.success;
   return <Box flexDirection="column" marginBottom={1}>
-    <Text bold color={color}>{role}</Text>
-    {rows.map((line, index) => {
-      const code = /^\s{4}|^```/.test(line);
-      const heading = /^#{1,6}\s/.test(line);
-      return <Text key={index} color={code ? theme.code : theme.text} bold={heading} wrap="truncate-end">{line || " "}</Text>;
-    })}
-    {overflow > 0 && <Text color={theme.muted}>…{overflow} more line(s) — Ctrl+Y for the full untruncated conversation</Text>}
+    <Text bold color={color}>{isUser ? "❯" : "◆"} {isUser ? "you" : "forge"}</Text>
+    <Box flexDirection="column" paddingLeft={2}>
+      {rows.map((line, index) => {
+        const code = /^\s{4}|^```/.test(line);
+        const heading = /^#{1,6}\s/.test(line);
+        const bullet = /^\s*[-*•]\s/.test(line);
+        return <Text
+          key={index}
+          color={heading ? theme.accent : code ? theme.code : bullet ? theme.text : theme.text}
+          bold={heading}
+          dimColor={!heading && !code && !isUser ? false : undefined}
+          wrap="truncate-end"
+        >{line || " "}</Text>;
+      })}
+      {overflow > 0 && <Text color={theme.muted} wrap="truncate-end">… {overflow} more line{overflow === 1 ? "" : "s"} · ^Y to read it all</Text>}
+    </Box>
   </Box>;
 }
 
@@ -854,8 +864,8 @@ export function ForgeTui({ config }: { config: ForgeConfig }): React.ReactElemen
   const composerWidth = Math.max(20, dimensions.columns - 4);
   const composerMaxRows = Math.max(1, Math.min(6, Math.floor(dimensions.rows / 5)));
   const composerText = busy
-    ? `Working… type to queue · Esc cancel${input ? `\n› ${cursorView}` : ""}`
-    : `› ${cursorView}`;
+    ? `working… type to queue · esc cancels${input ? `\n❯ ${cursorView}` : ""}`
+    : `❯ ${cursorView}${input ? "" : "  send a message, or / for a command"}`;
   const composerRows = wrapReaderText(sanitizeTerminalText(composerText), composerWidth);
   // Window the view onto the row holding the cursor so typing stays visible
   // even when the buffer is far longer than the box.
@@ -899,27 +909,36 @@ export function ForgeTui({ config }: { config: ForgeConfig }): React.ReactElemen
         truncate against; without it a long workspace/profile/model name
         renders at full natural width and overwrites "FORGE". */}
     <Box flexShrink={0}>
-      <Box flexShrink={0}><Text bold color={theme.accent}>◆ FORGE</Text></Box>
+      <Box flexShrink={0}>
+        <Text bold color={theme.accent}>◆ forge</Text>
+        <Text color={theme.muted} dimColor> · {sanitizeTerminalText(path.basename(config.permissions.workspaceRoot))}</Text>
+      </Box>
       <Box flexGrow={1} flexShrink={1} minWidth={0} justifyContent="flex-end">
         {/* Leading space matters: with truncate-end the status fills the whole
             remaining width when it's long, and without it the text butts
-            straight up against "FORGE". */}
-        <Text wrap="truncate-end" color={theme.muted}> {sanitizeTerminalText(path.basename(config.permissions.workspaceRoot))} · {sanitizeTerminalText(config.activeProfile)}/{sanitizeTerminalText(profile.model)} · {profile.kind === "local" ? "local" : "cloud"} · {config.permissions.mode}{config.routing.offline ? " · offline" : ""}</Text>
+            straight up against the logo. */}
+        <Text wrap="truncate-end" color={theme.muted}> {sanitizeTerminalText(config.activeProfile)}/{sanitizeTerminalText(profile.model)} · {profile.kind === "local" ? "local" : "cloud"}{config.routing.offline ? " · offline" : ""}</Text>
       </Box>
     </Box>
 
     {/* Conversation — the single pane. */}
-    <Box ref={conversationPaneRef} flexGrow={1} flexShrink={1} flexBasis={0} flexDirection="column" overflow="hidden" marginTop={1}>
+    {/* justifyContent flex-end keeps the newest message sitting just above the
+        composer, the way a chat should read; when there's more than fits, the
+        oldest content is what falls off the top. */}
+    <Box ref={conversationPaneRef} flexGrow={1} flexShrink={1} flexBasis={0} flexDirection="column" justifyContent="flex-end" overflow="hidden" marginTop={1}>
       {visibleMessages.map((message, index) => <MessageBlock key={`${message.role}-${index}`} message={message} theme={theme} maxLines={messageMaxLines} paneWidth={conversationPaneWidth} />)}
-      {!visibleMessages.length && <Box flexGrow={1} alignItems="center" justifyContent="center"><Text color={theme.muted}>Ask about this workspace · ^K commands · ^M models</Text></Box>}
+      {!visibleMessages.length && <Box flexGrow={1} flexDirection="column" alignItems="center" justifyContent="center">
+        <Text color={theme.accent} bold>{sanitizeTerminalText(profile.model)}</Text>
+        <Text color={theme.muted}>ask anything about this workspace</Text>
+        <Box marginTop={1}><Text color={theme.muted} dimColor>^K commands   ^P add files   ^M models   ? help</Text></Box>
+      </Box>}
     </Box>
 
     {/* Recent tool activity, inline instead of a side pane. */}
-    {activities.length > 0 && <Box flexShrink={0} flexDirection="column" overflow="hidden">
+    {activities.length > 0 && <Box flexShrink={0} flexDirection="column" overflow="hidden" marginTop={1}>
       {activities.slice(0, 3).map((item, index) => <Box key={item.id} ref={(node) => { if (node) activityItemRefs.current.set(index, node); else activityItemRefs.current.delete(index); }}>
-        <Text color={item.status === "failed" ? theme.danger : item.status === "completed" ? theme.success : theme.warning} wrap="truncate-end">
-          {statusSymbol(item.status)} {sanitizeTerminalText(item.name)}{item.durationMs != null ? ` ${item.durationMs}ms` : ""}
-        </Text>
+        <Text color={item.status === "failed" ? theme.danger : item.status === "completed" ? theme.success : theme.warning}>{statusSymbol(item.status)} </Text>
+        <Text color={theme.muted} wrap="truncate-end">{sanitizeTerminalText(item.name)}{item.durationMs != null ? ` · ${item.durationMs}ms` : ""}</Text>
       </Box>)}
     </Box>}
 
@@ -928,30 +947,33 @@ export function ForgeTui({ config }: { config: ForgeConfig }): React.ReactElemen
       {visibleComposerRows.map((row, index) => (
         <Text key={index} color={busy ? theme.warning : theme.text} wrap="truncate-end">{row || " "}</Text>
       ))}
-      {hiddenComposerRows > 0 && <Text color={theme.muted} wrap="truncate-end">…{hiddenComposerRows} more line(s)</Text>}
+      {hiddenComposerRows > 0 && <Text color={theme.muted} wrap="truncate-end">… {hiddenComposerRows} more line{hiddenComposerRows === 1 ? "" : "s"}</Text>}
     </Box>
-    {suggestions.length > 0 && <Text color={theme.muted} wrap="truncate-end">{suggestions.join("  ")}</Text>}
-    {queuedPrompt && <Text color={theme.warning} wrap="truncate-end">queued: {sanitizeTerminalText(queuedPrompt)}</Text>}
+    {suggestions.length > 0 && <Box paddingLeft={2}><Text color={theme.accent} dimColor wrap="truncate-end">{suggestions.join("   ")}</Text></Box>}
+    {queuedPrompt && <Box paddingLeft={2}><Text color={theme.warning} wrap="truncate-end">queued · {sanitizeTerminalText(queuedPrompt)}</Text></Box>}
 
-    {/* Status: state + notice, then usage, then shortcuts. */}
+    {/* Status bar: state and usage on the left, shortcuts pushed right. */}
     <Box flexShrink={0} overflow="hidden" marginTop={1}>
-      <Box flexShrink={0}><Text color={busy ? theme.warning : theme.success}>{busy ? "● working" : "○ ready"}</Text></Box>
+      <Box flexShrink={0}>
+        <Text color={busy ? theme.warning : theme.success}>{busy ? "●" : "○"}</Text>
+        <Text color={theme.muted}> {busy ? "working" : "ready"}</Text>
+      </Box>
       <Box flexGrow={1} flexShrink={1} minWidth={0}>
         {/* "Ready" would just repeat the state indicator to its left. */}
-        <Text color={notice.startsWith("Error:") ? theme.danger : theme.muted} wrap="truncate-end">{notice === "Ready" ? "" : ` ${sanitizeTerminalText(notice)}`}</Text>
+        <Text color={notice.startsWith("Error:") ? theme.danger : theme.muted} wrap="truncate-end">{notice === "Ready" ? "" : ` · ${sanitizeTerminalText(notice)}`}</Text>
+      </Box>
+      <Box flexShrink={0}>
+        <Text color={limitExceeded ? theme.danger : theme.muted} bold={limitExceeded} dimColor={!limitExceeded} wrap="truncate-end">{sanitizeTerminalText(usageLine)}</Text>
       </Box>
     </Box>
-    <Box flexShrink={0} overflow="hidden">
-      <Text color={limitExceeded ? theme.danger : theme.muted} bold={limitExceeded} wrap="truncate-end">{sanitizeTerminalText(usageLine)}</Text>
-    </Box>
-    <Box flexShrink={0} gap={2} overflow="hidden">
-      <Box ref={commandButtonRef}><Text color={theme.muted}>^K commands</Text></Box>
-      <Box ref={filesButtonRef}><Text color={theme.muted}>^P files</Text></Box>
-      <Box ref={modelsButtonRef}><Text color={theme.muted}>^M models</Text></Box>
-      <Box ref={sessionsButtonRef}><Text color={theme.muted}>^S sessions</Text></Box>
-      <Box ref={readerButtonRef}><Text color={theme.muted}>^Y reader</Text></Box>
-      <Box ref={modeButtonRef}><Text color={config.permissions.mode === "autonomous" ? theme.warning : theme.muted}>^A mode</Text></Box>
-      <Box ref={helpButtonRef}><Text color={theme.muted}>? help</Text></Box>
+    <Box flexShrink={0} gap={3} overflow="hidden">
+      <Box ref={commandButtonRef}><Text color={theme.muted} dimColor>^K cmds</Text></Box>
+      <Box ref={filesButtonRef}><Text color={theme.muted} dimColor>^P files</Text></Box>
+      <Box ref={modelsButtonRef}><Text color={theme.muted} dimColor>^M models</Text></Box>
+      <Box ref={sessionsButtonRef}><Text color={theme.muted} dimColor>^S sessions</Text></Box>
+      <Box ref={readerButtonRef}><Text color={theme.muted} dimColor>^Y reader</Text></Box>
+      <Box ref={modeButtonRef}><Text color={config.permissions.mode === "autonomous" ? theme.warning : theme.muted} dimColor={config.permissions.mode !== "autonomous"}>^A {config.permissions.mode}</Text></Box>
+      <Box ref={helpButtonRef}><Text color={theme.muted} dimColor>? help</Text></Box>
     </Box>
   </Box>;
 }
