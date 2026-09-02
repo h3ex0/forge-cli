@@ -73,6 +73,47 @@ describe("Forge TUI rendering", () => {
     expect(output).not.toMatch(/FORGE[^\s│]/);
   });
 
+  it("keeps the frame within the terminal height when stdin floods the composer", async () => {
+    const stdout = new PassThrough() as unknown as NodeJS.WriteStream;
+    const stderr = new PassThrough() as unknown as NodeJS.WriteStream;
+    const stdin = new PassThrough() as unknown as NodeJS.ReadStream;
+    Object.assign(stdout, { columns: 130, rows: 35, isTTY: false });
+    Object.assign(stdin, { isTTY: true, setRawMode: vi.fn(), ref: vi.fn(), unref: vi.fn() });
+    let output = "";
+    stdout.on("data", (chunk) => { output += chunk.toString(); });
+    const config = migrateConfig({ activeProfile: "test", profiles: { test: { baseURL: "https://example.test", apiKey: "", format: "openai", model: "qwen" } } });
+
+    const instance = render(React.createElement(ForgeTui, { config }), { stdout, stderr, stdin, interactive: false, patchConsole: false });
+    await instance.waitUntilRenderFlush();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    // Reproduces the failure captured on video: a flood of single-character
+    // keystrokes (each below the paste-collapse threshold, so they land in the
+    // composer one at a time). Unbounded, this grew the composer past the
+    // terminal height, which scrolled the terminal and permanently desynced
+    // Ink's cursor-relative redraw — old and new frames superimposed.
+    // Written in separate batches (each well under the paste-collapse
+    // threshold, and each arriving as its own stdin event) so this exercises
+    // the keystroke path the video shows, not the bulk-paste path.
+    for (let batch = 0; batch < 30; batch += 1) {
+      stdin.write("5".repeat(50));
+      await new Promise((resolve) => setTimeout(resolve, 1));
+    }
+    await new Promise((resolve) => setTimeout(resolve, 120));
+
+    instance.unmount();
+    await instance.waitUntilExit();
+
+    const marker = "\x1b[2K\x1b[G";
+    const lastFrameStart = output.lastIndexOf(marker);
+    const lastFrame = lastFrameStart >= 0 ? output.slice(lastFrameStart + marker.length) : output;
+    const stripAnsi = (value: string) => value.replace(/\x1b\[[0-9;]*m/g, "").replace(/\x1b\[[0-9]*[A-Za-z]/g, "");
+    const frameLines = stripAnsi(lastFrame).split("\n").filter((line) => line.trim().length > 0);
+
+    expect(frameLines.length).toBeLessThanOrEqual(35);
+    expect(stripAnsi(lastFrame)).toContain("more line(s) in the composer");
+  });
+
   it("cycles the permission mode with Ctrl+A", async () => {
     const stdout = new PassThrough() as unknown as NodeJS.WriteStream;
     const stderr = new PassThrough() as unknown as NodeJS.WriteStream;

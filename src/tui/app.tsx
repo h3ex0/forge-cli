@@ -864,6 +864,29 @@ export function ForgeTui({ config }: { config: ForgeConfig }): React.ReactElemen
     || (profile.subscription?.costLimitUsd != null && estimatedCostUsd != null && estimatedCostUsd >= profile.subscription.costLimitUsd)
     || (profile.contextWindowTokens != null && contextTokens / profile.contextWindowTokens >= 0.9);
   const cursorView = `${input.slice(0, cursor)}█${input.slice(cursor)}`;
+  // The composer must never grow past a few rows. It renders whatever is in
+  // the buffer, so anything that floods stdin — a runaway paste, a stuck key,
+  // a remote-desktop/terminal quirk replaying keystrokes — otherwise grows
+  // this box until the whole frame is taller than the terminal. Once that
+  // happens the terminal scrolls, Ink's cursor-relative redraw math is
+  // permanently off by however much it scrolled, and every later frame paints
+  // at the wrong offset: old and new frames end up superimposed, with text
+  // running across pane borders. Bounding the rendered rows here (the full
+  // text stays in state, only the view is windowed) keeps the frame height
+  // fixed no matter what arrives on stdin.
+  const composerWidth = Math.max(20, dimensions.columns - 4);
+  const composerMaxRows = Math.max(1, Math.min(6, Math.floor(dimensions.rows / 5)));
+  const composerText = busy
+    ? `Working… type to queue · Esc cancel${input ? `\n› ${cursorView}` : ""}`
+    : `› ${cursorView}`;
+  const composerRows = wrapReaderText(sanitizeTerminalText(composerText), composerWidth);
+  // Window the view onto the row holding the cursor so typing stays visible
+  // even when the buffer is far longer than the box.
+  const cursorRow = composerRows.findIndex((row) => row.includes("█"));
+  const anchorRow = cursorRow >= 0 ? cursorRow : composerRows.length - 1;
+  const composerStart = Math.max(0, Math.min(anchorRow - composerMaxRows + 1, composerRows.length - composerMaxRows));
+  const visibleComposerRows = composerRows.slice(composerStart, composerStart + composerMaxRows);
+  const hiddenComposerRows = composerRows.length - visibleComposerRows.length;
   const readerLines = reader ? wrapReaderText(reader.content, dimensions.columns) : [];
   const readerPageSize = Math.max(1, dimensions.rows - 3);
   void revision;
@@ -918,12 +941,23 @@ export function ForgeTui({ config }: { config: ForgeConfig }): React.ReactElemen
         <Text>Messages: {allMessages.length}</Text>
         <Text>Context: ~{estimateMessageTokens(messagesRef.current).toLocaleString("en-US")} tokens</Text>
         <Text color={theme.muted}>Ctrl+P add files</Text>
-        <Box marginTop={1} flexDirection="column"><Text bold color={theme.accent}>SESSION</Text><Text>{busy ? "● Working" : "○ Ready"}</Text><Text wrap="wrap" color={theme.muted}>{sanitizeTerminalText(notice)}</Text></Box>
+        <Box marginTop={1} flexDirection="column"><Text bold color={theme.accent}>SESSION</Text><Text>{busy ? "● Working" : "○ Ready"}</Text>
+          {/* Bounded for the same reason as the composer: a long notice (a
+              provider error body, say) would otherwise grow this pane and
+              push the frame past the terminal's height. Ctrl+E opens the
+              full text in the reader. */}
+          {wrapReaderText(sanitizeTerminalText(notice), (wide ? 29 : 25) - 4).slice(0, 4).map((row, index) => (
+            <Text key={index} color={theme.muted} wrap="truncate-end">{row || " "}</Text>
+          ))}
+        </Box>
       </Box>}
     </Box>
 
-    <Box ref={composerRef} borderStyle="round" borderColor={busy ? theme.warning : focus === "composer" ? theme.focusBorder : theme.border} paddingX={1} minHeight={3}>
-      <Text color={busy ? theme.warning : theme.text} wrap="wrap">{sanitizeTerminalText(busy ? `Working… type to queue · Esc cancel${input ? `\n› ${cursorView}` : ""}` : `› ${cursorView}`)}</Text>
+    <Box ref={composerRef} flexDirection="column" flexShrink={0} overflow="hidden" borderStyle="round" borderColor={busy ? theme.warning : focus === "composer" ? theme.focusBorder : theme.border} paddingX={1} minHeight={3}>
+      {visibleComposerRows.map((row, index) => (
+        <Text key={index} color={busy ? theme.warning : theme.text} wrap="truncate-end">{row || " "}</Text>
+      ))}
+      {hiddenComposerRows > 0 && <Text color={theme.muted} wrap="truncate-end">…{hiddenComposerRows} more line(s) in the composer</Text>}
     </Box>
     {suggestions.length > 0 && !overlay && <Text color={theme.muted}> {suggestions.join("  ")}</Text>}
     <Box paddingX={1} overflow="hidden">
